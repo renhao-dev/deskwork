@@ -1,0 +1,15 @@
+{
+  "name": "Deskwork",
+  "short_name": "Deskwork",
+  "description": "Goals, tasks and hours on one desk.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#304739",
+  "theme_color": "#304739",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
