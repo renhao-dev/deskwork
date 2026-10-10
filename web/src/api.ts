@@ -85,6 +85,10 @@ const itemPath = (type: ItemType, id: number) => `/${type}s/${id}`
 export const api = {
   me: () => request<User>('GET', '/me'),
   login: (username: string, password: string) => request<User>('POST', '/auth/login', { username, password }),
+  setupNeeded: () => request<{ needed: boolean }>('GET', '/auth/setup'),
+  /** Makes the first account on a fresh install, and signs it in. */
+  setup: (username: string, password: string) =>
+    request<User>('POST', '/auth/setup', { username, password, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
   logout: () => request('POST', '/auth/logout'),
   saveSettings: (patch: Partial<UserSettings>) => request<User>('PUT', '/me/settings', patch),
   /** Forget where the windows were, so they come back to their usual places. */

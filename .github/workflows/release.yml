@@ -1,0 +1,120 @@
+# Publishes a release when a version tag is pushed:
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# 1. build   – tests, builds the web app, packs deskwork-<version>.tar.gz
+# 2. verify  – installs that archive with Homebrew on a Mac and runs the formula's own test
+# 3. publish – makes the GitHub release and updates the formula in renhao-dev/homebrew-deskwork
+#
+# Nothing is published unless the build and the Homebrew install both pass. Running the workflow by
+# hand (Actions → Release → Run workflow) does steps 1 and 2 only: a dry run that publishes nothing. Updating the tap needs
+# the TAP_DEPLOY_KEY secret: the private half of a deploy key with write access to that repo.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build and test-install (nothing is published)
+        default: 0.0.0-dryrun
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then V="${GITHUB_REF_NAME#v}"; else V="$INPUT_VERSION"; fi
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::Not a version: $V"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: scripts/pack-release.sh "${{ steps.version.outputs.version }}" dist-release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist-release/
+          if-no-files-found: error
+
+  verify:
+    needs: build
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist-release
+      - name: Install the archive with Homebrew, as a user would
+        run: |
+          ARCHIVE="$PWD/dist-release/deskwork-$VERSION.tar.gz"
+          SHA=$(cut -d' ' -f1 "$ARCHIVE.sha256")
+          brew tap-new --no-git deskwork/ci
+          TAP="$(brew --repository deskwork/ci)"
+          scripts/render-formula.sh "$VERSION" "file://$ARCHIVE" "$SHA" > "$TAP/Formula/deskwork.rb"
+          brew install --verbose deskwork/ci/deskwork
+          brew test --verbose deskwork/ci/deskwork
+
+  publish:
+    needs: [build, verify]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist-release
+      - name: Create the GitHub release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist-release/deskwork-$VERSION.tar.gz" \
+            "dist-release/deskwork-$VERSION.tar.gz.sha256" \
+            --title "Deskwork $VERSION" --generate-notes --verify-tag
+      - name: Point the Homebrew formula at it
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          [ -n "$TAP_DEPLOY_KEY" ] || { echo "::error::TAP_DEPLOY_KEY secret is missing"; exit 1; }
+          mkdir -p ~/.ssh && printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/tap && chmod 600 ~/.ssh/tap
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone --depth 1 git@github.com:renhao-dev/homebrew-deskwork.git tap
+          SHA=$(cut -d' ' -f1 "dist-release/deskwork-$VERSION.tar.gz.sha256")
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/deskwork-$VERSION.tar.gz"
+          mkdir -p tap/Formula
+          scripts/render-formula.sh "$VERSION" "$URL" "$SHA" > tap/Formula/deskwork.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/deskwork.rb
+          git commit -m "deskwork $VERSION"
+          git push

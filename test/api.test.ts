@@ -33,10 +33,24 @@ const ok = async (method: string, path: string, body?: unknown) => {
 }
 
 before(async () => {
-  // An empty database comes with admin/admin, so logging in exercises auth too.
-  await ok('POST', '/api/auth/login', { username: 'admin', password: 'admin' })
+  // An empty database has no accounts: the first one is made through setup, which signs it in.
+  assert.deepEqual(await ok('GET', '/api/auth/setup'), { needed: true })
+  assert.equal((await call('POST', '/api/auth/login', { username: 'admin', password: 'admin' })).status, 401)
+  const me = await ok('POST', '/api/auth/setup', { username: 'admin', password: 'admin', timezone: 'Europe/Berlin' })
+  assert.equal(me.isAdmin, true)
+  assert.equal(me.settings.timezone, 'Europe/Berlin')
 })
 after(() => rmSync(dir, { recursive: true, force: true }))
+
+test('setup only works once, so nobody can make a second admin through it', async () => {
+  assert.deepEqual(await ok('GET', '/api/auth/setup'), { needed: false })
+  const saved = cookie
+  cookie = ''
+  const r = await call('POST', '/api/auth/setup', { username: 'intruder', password: 'secret' })
+  assert.equal(r.status, 409)
+  assert.equal((await call('POST', '/api/auth/login', { username: 'intruder', password: 'secret' })).status, 401)
+  cookie = saved
+})
 
 test('a request without a session is refused', async () => {
   const saved = cookie

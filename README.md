@@ -2,7 +2,34 @@
 
 A personal task manager for long-running **goals** (daily time budget, optional points) and one-off **tasks**, with timers, a resource library (books, videos, links) and a full history.
 
-## Run it
+## Install (Homebrew)
+
+```sh
+brew install renhao-dev/deskwork/deskwork
+brew services start deskwork
+```
+
+Then open http://localhost:5174 in Chrome, make your account, and click **Install app** in the top bar for its own window and Dock icon.
+
+- Your data is in `~/Library/Application Support/Deskwork/data`, encrypted with your password. There is no way to reset the password.
+- Update: `brew upgrade deskwork`. Deskwork mentions it when a new version is out.
+- Stop or start the server: `brew services stop deskwork` / `brew services start deskwork`. Log: `$(brew --prefix)/var/log/deskwork.log`.
+- Remove: `brew services stop deskwork && brew uninstall deskwork`. The data folder stays until you delete it.
+- If you also used `scripts/install-mac.sh`, run `scripts/install-mac.sh --uninstall` first: both serve on port 5174. They share the same data folder.
+
+## Release
+
+Push a version tag:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` then tests and builds, installs the archive with Homebrew on a Mac to check it works, publishes the GitHub release, and updates the formula in [renhao-dev/homebrew-deskwork](https://github.com/renhao-dev/homebrew-deskwork). The version comes from the tag; `package.json` doesn't need bumping. To try the pipeline without publishing, run the workflow by hand from the Actions tab.
+
+The formula is generated from `packaging/deskwork.rb.in`. The workflow pushes to the tap with a deploy key stored in the `TAP_DEPLOY_KEY` secret.
+
+## Run it from source
 
 Requires Node 24+.
 
@@ -12,7 +39,7 @@ npm run build   # build the web app once
 npm start       # http://localhost:5174
 ```
 
-First sign-in: **admin / admin**. Change the password in Settings, and add more users from the Users menu.
+On first start Deskwork asks you to make an account; that account is the admin and can add more users from the Users menu.
 
 For development with hot reload: `npm run dev`, then open http://localhost:5173.
 

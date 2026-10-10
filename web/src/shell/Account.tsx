@@ -10,18 +10,24 @@ import { ensureNotificationPermission, notificationPermission, notify } from '..
 
 export function Login() {
   const qc = useQueryClient()
+  // A fresh install has no accounts yet; then this screen makes the first one instead.
+  const setup = useQuery({ queryKey: ['setup'], queryFn: api.setupNeeded, staleTime: Infinity })
+  const first = setup.data?.needed === true
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [repeat, setRepeat] = useState('')
+  const mismatch = first && repeat !== '' && repeat !== password
   const login = useMutation({
-    mutationFn: () => api.login(username, password),
+    mutationFn: () => (first ? api.setup(username, password) : api.login(username, password)),
     onSuccess: (u) => {
       qc.setQueryData(keys.me, u)
       qc.invalidateQueries()
     },
   })
+  if (setup.isPending) return <div className="boot" aria-busy="true" />
   return (
     <main className="login">
-      <form className="login-card" onSubmit={(e) => (e.preventDefault(), login.mutate())}>
+      <form className="login-card" onSubmit={(e) => (e.preventDefault(), !mismatch && login.mutate())}>
         <div className="brand brand-lg">
           <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden>
             <circle cx="16" cy="17" r="10" fill="none" stroke="currentColor" strokeWidth="3" />
@@ -29,19 +35,30 @@ export function Login() {
           </svg>
           <span>Deskwork</span>
         </div>
-        <p className="login-lede">Your goals, tasks and hours, one desk.</p>
+        <p className="login-lede">{first ? 'Welcome. Make your account to start.' : 'Your goals, tasks and hours, one desk.'}</p>
         <Field label="Username">
           <input autoFocus autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
         </Field>
         <Field label="Password">
-          <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input type="password" autoComplete={first ? 'new-password' : 'current-password'} value={password}
+            onChange={(e) => setPassword(e.target.value)} />
         </Field>
+        {first && (
+          <Field label="Password again">
+            <input type="password" autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)}
+              aria-invalid={mismatch} />
+          </Field>
+        )}
+        {mismatch && <p className="error-text" role="alert">The passwords don’t match.</p>}
         <ErrorText error={login.error} />
-        <Button variant="primary" type="submit" disabled={login.isPending || !username}>Sign in</Button>
+        <Button variant="primary" type="submit"
+          disabled={login.isPending || !username || (first && (!password || repeat !== password))}>
+          {first ? 'Create account' : 'Sign in'}
+        </Button>
         <p className="login-hint">
-          Your data is encrypted with your password, so signing in is what unlocks it — including
-          after Deskwork restarts. First time here? Sign in as admin / admin, then change the
-          password in Settings.
+          {first
+            ? 'Everything you write is encrypted with this password. There is no way to reset it, so keep it somewhere safe: without it, the data can’t be read by anyone, you included.'
+            : 'Your data is encrypted with your password, so signing in is what unlocks it — including after Deskwork restarts.'}
         </p>
       </form>
     </main>

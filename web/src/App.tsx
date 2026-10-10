@@ -20,6 +20,7 @@ import { ResourceDialog } from './resources/ResourceDialog.tsx'
 import { WikiWindow } from './wiki/WikiWindow.tsx'
 import { isWikiPath } from './wiki/route.ts'
 import { listenForChanges } from './wiki/sync.ts'
+import { announceNewRelease } from './updates.ts'
 
 // /wiki is the wiki on its own, full screen, in its own window.
 const WikiApp = lazy(() => import('./wiki/WikiApp.tsx').then((m) => ({ default: m.WikiApp })))
@@ -60,6 +61,12 @@ export function App() {
     }
   }, [me.data, qc])
 
+  // Once signed in, mention a newer release if there is one.
+  const signedIn = !!me.data
+  useEffect(() => {
+    if (signedIn) announceNewRelease()
+  }, [signedIn])
+
   const theme = me.data?.settings.theme
   useEffect(() => {
     if (theme) applyTheme(theme)
@@ -90,7 +97,7 @@ export function App() {
         <div className="login-card">
           <h1 className="dialog-title">Can't reach the server</h1>
           <p>{me.error.message}</p>
-          <p className="login-hint">It starts by itself when you log in. To start it now, run <code>scripts/start.sh</code> in the Deskwork project folder. This page reconnects on its own.</p>
+          <p className="login-hint">It starts by itself when you log in. To start it now, run <code>brew services start deskwork</code> in Terminal. This page reconnects on its own.</p>
         </div>
         <Retry onRetry={() => me.refetch()} />
       </main>

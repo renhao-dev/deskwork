@@ -140,17 +140,22 @@ export function logout(c: Context) {
   deleteCookie(c, COOKIE, { path: '/' })
 }
 
-export function ensureDefaultAdmin() {
-  const count = get<{ n: number }>('SELECT COUNT(*) AS n FROM users')!.n
-  if (count > 0) return
-  run(
-    'INSERT INTO users (username, password_hash, is_admin, settings, created_at) VALUES (?, ?, 1, ?, ?)',
-    'admin',
-    hashPassword('admin'),
-    JSON.stringify(DEFAULT_SETTINGS),
-    Date.now(),
-  )
-  console.log('Created default user admin / admin')
+/** A fresh install has no accounts. The first person to open it makes one, and it is the admin. */
+export const needsSetup = () => get<{ n: number }>('SELECT COUNT(*) AS n FROM users')!.n === 0
+
+/** The rules every new account follows. Returns the cleaned-up username. */
+export function checkNewAccount(username: unknown, password: unknown): string {
+  const name = String(username ?? '').trim()
+  if (!/^[\w.-]{2,32}$/.test(name)) throw new HTTPException(400, { message: 'Username: 2–32 letters, digits, dots, dashes or underscores' })
+  if (String(password ?? '').length < 4) throw new HTTPException(400, { message: 'Password needs at least 4 characters' })
+  if (get('SELECT 1 FROM users WHERE username = ?', name)) throw new HTTPException(409, { message: `“${name}” is already taken` })
+  return name
+}
+
+export function insertUser(name: string, password: string, isAdmin: boolean, settings: UserSettings) {
+  const r = run('INSERT INTO users (username, password_hash, is_admin, settings, created_at) VALUES (?, ?, ?, ?, ?)',
+    name, hashPassword(password), isAdmin ? 1 : 0, JSON.stringify(settings), Date.now())
+  return Number(r.lastInsertRowid)
 }
 
 export type Env = { Variables: { user: User } }

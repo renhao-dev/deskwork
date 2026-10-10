@@ -9,16 +9,16 @@ import { randomUUID } from 'node:crypto'
 import { all, get, run, useConnection, UPLOAD_DIR } from './db.ts'
 import * as vault from './vault.ts'
 import {
-  ensureDefaultAdmin, rewrapKey, findUser, hashPassword, login, logout, parseSettings, requireAdmin, requireUser, toUser,
+  checkNewAccount, insertUser, needsSetup, rewrapKey, findUser, hashPassword, login, logout, parseSettings, requireAdmin, requireUser, toUser,
   verifyPassword, type Env,
 } from './auth.ts'
+import { isNewer, latestRelease, VERSION } from './version.ts'
 import * as store from './store.ts'
 import * as notes from './notes.ts'
 import * as spaces from './spaces.ts'
 import * as links from './links.ts'
 import type { ItemType, UserSettings } from '../shared/types.ts'
 
-ensureDefaultAdmin()
 
 export const app = new Hono<Env>()
 const api = new Hono<Env>()
@@ -43,9 +43,25 @@ const idParam = (v: string | undefined) => {
 const typeParam = (v: string | undefined): ItemType =>
   v === 'goals' || v === 'goal' ? 'goal' : v === 'tasks' || v === 'task' ? 'task' : store.fail(404, 'Not found')
 
-api.get('/health', (c) => c.json({ ok: true, build: BUILD }))
+api.get('/health', (c) => c.json({ ok: true, build: BUILD, version: VERSION }))
+api.get('/version', async (c) => {
+  const latest = await latestRelease()
+  return c.json({ version: VERSION, latest: latest && isNewer(latest.version, VERSION) ? latest : null })
+})
 
 // ---------- auth ----------
+
+// Only answers before the first account exists, so it can't be used to add more later.
+api.get('/auth/setup', (c) => c.json({ needed: needsSetup() }))
+api.post('/auth/setup', async (c) => {
+  const { username, password, timezone } = await body<{ username?: string; password?: string; timezone?: string }>(c)
+  if (!needsSetup()) store.fail(409, 'Deskwork is already set up. Sign in instead.')
+  const name = checkNewAccount(username, password)
+  const settings = { ...parseSettings('{}'), ...(timezone ? { timezone: String(timezone) } : {}) }
+  insertUser(name, String(password), true, settings)
+  // Signing in makes the vault, encrypted with the password just chosen.
+  return c.json(login(c, name, String(password)))
+})
 
 api.post('/auth/login', async (c) => {
   const { username, password } = await body<{ username?: string; password?: string }>(c)
@@ -120,14 +136,9 @@ api.get('/users', requireAdmin, (c) => c.json(all<Parameters<typeof toUser>[0]>(
 
 api.post('/users', requireAdmin, async (c) => {
   const { username, password, isAdmin } = await body<{ username?: string; password?: string; isAdmin?: boolean }>(c)
-  const name = String(username ?? '').trim()
-  if (!/^[\w.-]{2,32}$/.test(name)) store.fail(400, 'Username: 2–32 letters, digits, dots, dashes or underscores')
-  if (String(password ?? '').length < 4) store.fail(400, 'Password needs at least 4 characters')
-  if (get('SELECT 1 FROM users WHERE username = ?', name)) store.fail(409, `“${name}” is already taken`)
+  const name = checkNewAccount(username, password)
   const settings = { ...parseSettings('{}'), timezone: c.get('user').settings.timezone }
-  const r = run('INSERT INTO users (username, password_hash, is_admin, settings, created_at) VALUES (?, ?, ?, ?, ?)',
-    name, hashPassword(String(password)), isAdmin ? 1 : 0, JSON.stringify(settings), Date.now())
-  return c.json(findUser(Number(r.lastInsertRowid)))
+  return c.json(findUser(insertUser(name, String(password), !!isAdmin, settings)))
 })
 
 api.put('/users/:id', requireAdmin, async (c) => {
