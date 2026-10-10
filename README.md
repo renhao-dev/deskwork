@@ -19,11 +19,11 @@ Then open http://localhost:5174 in Chrome, make your account, and click **Instal
 
 ## Release
 
-Push a version tag:
-
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+scripts/release.sh
 ```
+
+It checks that the current commit is pushed and clean, shows what changed since the last release, asks for the new version (suggesting the next fix, feature or major number), then tags the commit and pushes the tag and follows the release run until it finishes. `scripts/release.sh --dry-run` goes through the questions without tagging anything. By hand, the same is `git tag -a v0.2.0 -m "Deskwork 0.2.0" && git push origin v0.2.0`.
 
 `.github/workflows/release.yml` then tests and builds, installs the archive with Homebrew on a Mac to check it works, publishes the GitHub release, and updates the formula in [renhao-dev/homebrew-deskwork](https://github.com/renhao-dev/homebrew-deskwork). The version comes from the tag; `package.json` doesn't need bumping. To try the pipeline without publishing, run the workflow by hand from the Actions tab.
 
