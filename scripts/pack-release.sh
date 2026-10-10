@@ -17,6 +17,10 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/$NAME/web"
 cp -R "$ROOT/server" "$ROOT/shared" "$ROOT/package.json" "$ROOT/package-lock.json" "$STAGE/$NAME/"
 cp -R "$ROOT/web/dist" "$STAGE/$NAME/web/"
+# The Launchpad icon: the script that makes Deskwork.app, and the icon it uses.
+mkdir -p "$STAGE/$NAME/packaging" "$STAGE/$NAME/assets"
+cp "$ROOT/packaging/mac-launcher.sh" "$STAGE/$NAME/packaging/"
+cp "$ROOT/assets/Deskwork.icns" "$STAGE/$NAME/assets/"
 # The version comes from the release tag, so package.json in the repo never has to be bumped by hand.
 (cd "$STAGE/$NAME" && npm pkg set version="$VERSION")
 

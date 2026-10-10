@@ -163,5 +163,5 @@ touch "$APP"
 echo
 echo "Installed $APP"
 echo "Data folder: $DATA"
-echo "Open Deskwork from Launchpad or Spotlight. First sign-in: admin / admin."
+echo "Open Deskwork from Launchpad or Spotlight. The first time, it asks you to make an account."
 echo "Then click \"Install app\" in the top bar to give Deskwork its own Dock icon and window."
