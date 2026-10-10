@@ -11,6 +11,8 @@ export const keys = {
   tasks: ['tasks'] as const,
   resources: ['resources'] as const,
   folders: ['folders'] as const,
+  spaces: ['spaces'] as const,
+  spacePages: (spaceId: number, trash = false) => ['space-pages', spaceId, trash] as const,
   detail: (type: ItemType, id: number) => ['detail', type, id] as const,
   history: ['history'] as const,
   users: ['users'] as const,
@@ -26,6 +28,7 @@ export const useGoals = () => useQuery({ queryKey: keys.goals, queryFn: api.goal
 export const useTasks = () => useQuery({ queryKey: keys.tasks, queryFn: api.tasks })
 export const useResources = () => useQuery({ queryKey: keys.resources, queryFn: api.resources })
 export const useFolders = () => useQuery({ queryKey: keys.folders, queryFn: api.folders })
+export const useSpaces = () => useQuery({ queryKey: keys.spaces, queryFn: api.spaces })
 export const useDetail = (type: ItemType, id: number, enabled = true) =>
   useQuery({ queryKey: keys.detail(type, id), queryFn: () => api.detail(type, id), enabled })
 

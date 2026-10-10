@@ -13,6 +13,7 @@ import { openResource } from '../resources/resources.tsx'
 import { DayGroup } from '../items/Sessions.tsx'
 import { ResourceBrowser, ResourceRowTitle, resourceMeta, type FolderFilter } from '../resources/ResourceBrowser.tsx'
 import { FloatingWindow } from './FloatingWindow.tsx'
+import { SpacesWindow } from '../wiki/SpacesWindow.tsx'
 import { formatDuration } from '../../../shared/day.ts'
 import type { Completion, Dashboard, ItemType, Task } from '../../../shared/types.ts'
 
@@ -69,9 +70,11 @@ export function TasksWindow({ deskRef }: { deskRef: DeskRef }) {
   const { data } = useDashboard()
   const qc = useQueryClient()
   const tasks = data?.tasks ?? []
-  // Today's tasks get their own section at the top; the rest keep the order you put them in.
-  const today = tasks.filter((t) => t.scheduledDay === data?.today)
-  const rest = tasks.filter((t) => t.scheduledDay !== data?.today)
+  // Tasks whose day has passed come first, then today's; the rest keep the order you put them in.
+  const day = data?.today ?? ''
+  const due = tasks.filter((t) => t.scheduledDay !== null && t.scheduledDay < day)
+  const today = tasks.filter((t) => t.scheduledDay === day)
+  const rest = tasks.filter((t) => t.scheduledDay === null || t.scheduledDay > day)
 
   const save = (ordered: Task[]) => {
     const before = qc.getQueryData<Dashboard>(keys.dashboard)
@@ -88,6 +91,7 @@ export function TasksWindow({ deskRef }: { deskRef: DeskRef }) {
       },
     )
   }
+  const dueRows = useReorder(due, save)
   const todayRows = useReorder(today, save)
   const restRows = useReorder(rest, save)
 
@@ -101,6 +105,14 @@ export function TasksWindow({ deskRef }: { deskRef: DeskRef }) {
         </Empty>
       ) : (
         <>
+          {due.length > 0 && (
+            <>
+              <h3 className="list-section">Due</h3>
+              <ul className="rows reorderable" aria-label="Tasks past their day. Drag to reorder, or Alt+arrow keys.">
+                {due.map((t) => <TaskRow key={t.id} task={t} liProps={dueRows.rowProps(t)} />)}
+              </ul>
+            </>
+          )}
           {today.length > 0 && (
             <>
               <h3 className="list-section">Today</h3>
@@ -111,7 +123,7 @@ export function TasksWindow({ deskRef }: { deskRef: DeskRef }) {
           )}
           {rest.length > 0 && (
             <>
-              {today.length > 0 && <h3 className="list-section">Other tasks</h3>}
+              {due.length + today.length > 0 && <h3 className="list-section">Other tasks</h3>}
               <ul className="rows reorderable" aria-label="Other tasks. Drag to reorder, or Alt+arrow keys.">
                 {rest.map((t) => <TaskRow key={t.id} task={t} liProps={restRows.rowProps(t)} />)}
               </ul>
@@ -367,5 +379,6 @@ export const OPTIONAL_WINDOWS: Partial<Record<WindowId, (p: { deskRef: DeskRef }
   'manage-goals': ManageGoalsWindow,
   'manage-tasks': ManageTasksWindow,
   'manage-resources': ManageResourcesWindow,
+  'manage-spaces': SpacesWindow,
   history: HistoryWindow,
 }

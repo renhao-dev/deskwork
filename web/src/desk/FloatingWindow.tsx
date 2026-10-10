@@ -5,10 +5,8 @@ import { api } from '../api.ts'
 import { keys, useMe } from '../hooks.ts'
 import { closeWindow, focusWindow, useUi, type WindowId } from '../ui-store.ts'
 import { IconButton } from '../ui.tsx'
+import { centred, clamp, escaped } from './geometry.ts'
 import type { User, WindowRect } from '../../../shared/types.ts'
-
-const MIN_W = 260
-const MIN_H = 180
 
 export function useNarrow() {
   const q = '(max-width: 760px)'
@@ -20,17 +18,6 @@ export function useNarrow() {
     return () => m.removeEventListener('change', on)
   }, [])
   return narrow
-}
-
-function clamp(r: WindowRect, desk: DOMRect, whole = false): WindowRect {
-  const w = Math.min(Math.max(MIN_W, r.w), Math.max(MIN_W, desk.width))
-  const h = Math.min(Math.max(MIN_H, r.h), Math.max(MIN_H, desk.height))
-  // `whole` keeps the entire window on the desk (when it opens); dragging only keeps the title bar.
-  return {
-    w, h,
-    x: Math.min(Math.max(0, r.x), Math.max(0, desk.width - (whole ? w : 120))),
-    y: Math.min(Math.max(0, r.y), Math.max(0, desk.height - (whole ? h : 48))),
-  }
 }
 
 export function FloatingWindow({
@@ -59,6 +46,7 @@ export function FloatingWindow({
   const saved = me?.settings.layout[id]
   const [rect, setRect] = useState<WindowRect | null>(null)
   const drag = useRef<{ kind: 'move' | 'resize'; sx: number; sy: number; start: WindowRect } | null>(null)
+  const el = useRef<HTMLElement>(null)
 
   // Place the window once the desk has a size, and keep it on screen when the desk shrinks.
   useEffect(() => {
@@ -66,7 +54,7 @@ export function FloatingWindow({
     if (!desk) return
     const place = () => {
       const box = desk.getBoundingClientRect()
-      setRect((cur) => clamp(cur ?? saved ?? defaultRect(box), box, !cur))
+      setRect((cur) => clamp(cur ?? saved ?? defaultRect(box), box))
     }
     place()
     const ro = new ResizeObserver(place)
@@ -74,6 +62,23 @@ export function FloatingWindow({
     return () => ro.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deskRef])
+
+  /**
+   * Last line of defence: measure where the window actually landed. The arithmetic above keeps the
+   * rect on the desk, but a stylesheet can still move the element — so whatever the cause, a window
+   * whose title bar ends up off the desk is put back in the middle, where it can always be reached.
+   */
+  useEffect(() => {
+    const node = el.current
+    const desk = deskRef.current
+    if (!node || !desk || narrow || !rect || rect.max || drag.current) return
+    const area = desk.getBoundingClientRect()
+    if (!escaped(node.getBoundingClientRect(), area)) return
+    const fixed = centred(area, rect)
+    setRect(fixed)
+    persist(fixed)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rect, narrow])
 
   const persist = (r: WindowRect) => {
     qc.setQueryData<User>(keys.me, (u) => u && { ...u, settings: { ...u.settings, layout: { ...u.settings.layout, [id]: r } } })
@@ -119,6 +124,7 @@ export function FloatingWindow({
 
   return (
     <section
+      ref={el}
       className={`window${isFront ? ' is-front' : ''}${maximized ? ' is-max' : ''} ${className}`}
       style={style}
       aria-label={title}

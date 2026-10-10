@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import * as RTooltip from '@radix-ui/react-tooltip'
 import { api, ApiError, onReconnect } from './api.ts'
 import { keys, useMe } from './hooks.ts'
-import { useUi } from './ui-store.ts'
+import { openDetails, useUi } from './ui-store.ts'
 import { Toasts } from './ui.tsx'
 import { applyTheme } from './theme.ts'
 import { TopBar } from './shell/TopBar.tsx'
@@ -17,6 +17,12 @@ const ReaderWindow = lazy(() => import('./reader/ReaderWindow.tsx').then((m) => 
 import { AttachDialog, CreateDialog, ItemWindow } from './items/DetailsDialog.tsx'
 import { CompleteDialog, StartDialog } from './items/WorkDialogs.tsx'
 import { ResourceDialog } from './resources/ResourceDialog.tsx'
+import { WikiWindow } from './wiki/WikiWindow.tsx'
+import { isWikiPath } from './wiki/route.ts'
+import { listenForChanges } from './wiki/sync.ts'
+
+// /wiki is the wiki on its own, full screen, in its own window.
+const WikiApp = lazy(() => import('./wiki/WikiApp.tsx').then((m) => ({ default: m.WikiApp })))
 
 function Desk() {
   const deskRef = useRef<HTMLDivElement>(null)
@@ -30,6 +36,7 @@ function Desk() {
       {open.map((id) => {
         if (id === 'player') return <PlayerWindow key={id} deskRef={deskRef} />
         if (id === 'notes') return <NotesWindow key={id} deskRef={deskRef} />
+        if (id === 'wiki') return <WikiWindow key={id} deskRef={deskRef} />
         if (id === 'reader') return <Suspense key={id} fallback={null}><ReaderWindow deskRef={deskRef} /></Suspense>
         const W = OPTIONAL_WINDOWS[id]
         return W ? <W key={id} deskRef={deskRef} /> : null
@@ -63,6 +70,18 @@ export function App() {
     return () => void off()
   }, [qc])
 
+  // /?open=goal:7 — how the wiki's own window asks the desk to show something it can't.
+  useEffect(() => {
+    const asked = new URLSearchParams(window.location.search).get('open')
+    const m = /^(goal|task):(\d+)$/.exec(asked ?? '')
+    if (!m) return
+    openDetails({ type: m[1] as 'goal' | 'task', id: Number(m[2]) })
+    window.history.replaceState(null, '', window.location.pathname)
+  }, [])
+
+  // Keep up with edits made in the wiki's own window.
+  useEffect(() => listenForChanges(qc), [qc])
+
   if (me.isPending) return <div className="boot" aria-busy="true" />
   if (me.error) {
     if (me.error instanceof ApiError && me.error.status === 401) return <><Login /><Toasts /></>
@@ -77,6 +96,8 @@ export function App() {
       </main>
     )
   }
+
+  if (isWikiPath()) return <Suspense fallback={<div className="boot" aria-busy="true" />}><WikiApp /></Suspense>
 
   return (
     <RTooltip.Provider delayDuration={150}>

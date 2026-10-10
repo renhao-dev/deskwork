@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import type {
-  AttachedResource, BookmarkInput, Comment, CompleteInput, CompleteResult, Completion, Dashboard, Goal, ItemDetail,
-  ItemType, Note, NoteSummary, Resource, ResourceFolder, Task, TimerMode, User, UserSettings, WorkSession,
+  AttachedResource, Backlink, BookmarkInput, Comment, CompleteInput, CompleteResult, Completion, Dashboard, Goal, ItemDetail, LinkTarget,
+  ItemType, Note, NoteSummary, Resource, ResourceFolder, SearchHit, Space, SpaceInput, Task, TimerMode, User, UserSettings, WorkSession,
 } from '../../shared/types.ts'
 import type { TimerState } from '../../shared/timer.ts'
 
@@ -143,6 +143,7 @@ export const api = {
     }),
 
   resources: () => request<Resource[]>('GET', '/resources'),
+  resource: (id: number) => request<Resource>('GET', `/resources/${id}`),
   createResource: (r: Partial<Resource>) => request<Resource>('POST', '/resources', r),
   updateResource: (id: number, r: Partial<Resource>) => request<Resource>('PUT', `/resources/${id}`, r),
   deleteResource: (id: number) => request('DELETE', `/resources/${id}`),
@@ -151,6 +152,26 @@ export const api = {
   updateFolder: (id: number, patch: { name?: string; parentId?: number | null }) =>
     request<ResourceFolder>('PUT', `/resource-folders/${id}`, patch),
   deleteFolder: (id: number) => request('DELETE', `/resource-folders/${id}`),
+
+  spaces: () => request<Space[]>('GET', '/spaces'),
+  createSpace: (input: SpaceInput) => request<Space>('POST', '/spaces', input),
+  updateSpace: (id: number, input: SpaceInput) => request<Space>('PUT', `/spaces/${id}`, input),
+  deleteSpace: (id: number) => request('DELETE', `/spaces/${id}`),
+  setGoalSpace: (goalId: number, spaceId: number) => request<Goal>('PUT', `/goals/${goalId}/space`, { spaceId }),
+  linkTargets: (q: string) => request<LinkTarget[]>('GET', `/link-targets?q=${encodeURIComponent(q)}`),
+  backlinks: (kind: 'pages' | 'goals' | 'tasks' | 'books', id: number) =>
+    request<Backlink[]>('GET', `/backlinks/${kind}/${id}`),
+  search: (q: string, spaceId?: number) =>
+    request<SearchHit[]>('GET', `/search?q=${encodeURIComponent(q)}${spaceId ? `&spaceId=${spaceId}` : ''}`),
+  spacePages: (spaceId: number, trash = false) =>
+    request<NoteSummary[]>('GET', `/spaces/${spaceId}/pages${trash ? '?trash=1' : ''}`),
+  createPage: (spaceId: number, input: { title?: string; body?: string; parentId?: number | null }) =>
+    request<Note>('POST', `/spaces/${spaceId}/pages`, input),
+  movePage: (id: number, to: { spaceId?: number; parentId?: number | null }) =>
+    request<Note>('PUT', `/notes/${id}/move`, to),
+  emptySpaceTrash: (spaceId: number) => request('DELETE', `/spaces/${spaceId}/trash`),
+  reorderPages: (spaceId: number, pages: { id: number; parentId: number | null }[]) =>
+    request('PUT', `/spaces/${spaceId}/pages/order`, { pages }),
   uploadFile: (id: number, file: File) =>
     request<Resource>('PUT', `/resources/${id}/file`, file, {
       headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },

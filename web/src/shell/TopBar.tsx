@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as Menu from '@radix-ui/react-dropdown-menu'
 import { useQueryClient } from '@tanstack/react-query'
-import { AppWindow, Check, ChevronDown, CircleUser, FolderKanban, History, LayoutGrid, Library, ListChecks, LogOut, Monitor, Moon, Pause, Play, Settings, Square, Sun, Target, Users, WifiOff } from 'lucide-react'
+import { AppWindow, Check, ChevronDown, CircleUser, FolderKanban, History, LayoutGrid, BookMarked, BookOpen, Library, ListChecks, LogOut, Monitor, Moon, Pause, Play, Settings, Square, Sun, Target, Users, WifiOff } from 'lucide-react'
 import { api, useServerOnline } from '../api.ts'
 import { keys, useAction, useMe, useTimerView } from '../hooks.ts'
 import { getUi, openDetails, openWindow, setUi } from '../ui-store.ts'
@@ -122,6 +122,18 @@ function TimerBar() {
 
 export function TopBar() {
   const { data: me } = useMe()
+  // A window that goes full screen on a narrow display has to start below this bar, and the bar
+  // grows taller as it wraps — so its height is measured rather than assumed.
+  const bar = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const el = bar.current
+    if (!el) return
+    const set = () => document.documentElement.style.setProperty('--topbar-h', `${Math.round(el.getBoundingClientRect().height)}px`)
+    set()
+    const ro = new ResizeObserver(set)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const online = useServerOnline()
   const canInstall = useCanInstall()
   const qc = useQueryClient()
@@ -137,7 +149,7 @@ export function TopBar() {
     location.reload()
   }
   return (
-    <header className="topbar">
+    <header className="topbar" ref={bar}>
       <div className="brand" aria-label="Deskwork">
         <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden>
           <circle cx="16" cy="17" r="10" fill="none" stroke="currentColor" strokeWidth="3" />
@@ -156,9 +168,11 @@ export function TopBar() {
               <Menu.Item className="menu-item" onSelect={() => openWindow('manage-goals')}><Target size={15} /> Goals</Menu.Item>
               <Menu.Item className="menu-item" onSelect={() => openWindow('manage-tasks')}><ListChecks size={15} /> Tasks</Menu.Item>
               <Menu.Item className="menu-item" onSelect={() => openWindow('manage-resources')}><Library size={15} /> Resources</Menu.Item>
+              <Menu.Item className="menu-item" onSelect={() => openWindow('manage-spaces')}><BookMarked size={15} /> Spaces</Menu.Item>
             </Menu.Content>
           </Menu.Portal>
         </Menu.Root>
+        <Button variant="ghost" className="nav-btn" onClick={() => openWindow('wiki')}><BookOpen size={17} /> Wiki</Button>
         <Button variant="ghost" className="nav-btn" onClick={() => openWindow('history')}><History size={17} /> History</Button>
       </nav>
 

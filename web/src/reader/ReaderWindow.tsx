@@ -1,6 +1,6 @@
 // Reading a book inside Deskwork: pages are drawn here, so a selection can go straight into a note.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { BookOpen, ExternalLink, Minus, Plus, Quote, StickyNote, Link2 } from 'lucide-react'
 import { api, fileUrl } from '../api.ts'
 import { keys, useDetail } from '../hooks.ts'
@@ -10,7 +10,7 @@ import { FloatingWindow } from '../desk/FloatingWindow.tsx'
 import { appendToActiveNote, selectionMarkdown } from '../notes/insert.ts'
 import { openReadingWindow } from '../resources/resources.tsx'
 import { pdfjs, tidySelection, type PdfDoc } from './pdf.ts'
-import type { AttachedResource } from '../../../shared/types.ts'
+import type { AttachedResource, Resource } from '../../../shared/types.ts'
 
 const ZOOMS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3]
 /** "fit" keeps the page as wide as the window; a number is a fixed zoom. */
@@ -83,14 +83,20 @@ function Page({ doc, number, zoom, available, onSize }: {
   )
 }
 
-function ReaderView({ refItem, resource, jumpTo }: { refItem: ItemRef; resource: AttachedResource; jumpTo?: number }) {
+function ReaderView({ refItem, resource, jumpTo }: {
+  /** The goal or task this reading belongs to, when there is one. */
+  refItem: ItemRef | null
+  resource: AttachedResource | Resource
+  jumpTo?: number
+}) {
   const qc = useQueryClient()
   const scroll = useRef<HTMLDivElement>(null)
   const [doc, setDoc] = useState<PdfDoc | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [zoom, setZoom] = useState<Zoom>('fit')
   const [available, setAvailable] = useState(700) // width a page may use, for fitting
-  const [page, setPage] = useState(resource.bookmark.page ?? 1)
+  const bookmarkPage = 'bookmark' in resource ? resource.bookmark.page : null
+  const [page, setPage] = useState(bookmarkPage ?? 1)
   const [menu, setMenu] = useState<{ x: number; y: number; text: string; page: number } | null>(null)
   const sizes = useRef(new Map<number, PageBox>())
   const onSize = useCallback((n: number, b: PageBox) => sizes.current.set(n, b), [])
@@ -126,24 +132,26 @@ function ReaderView({ refItem, resource, jumpTo }: { refItem: ItemRef; resource:
   useEffect(() => {
     if (!doc || opened.current) return
     opened.current = true
-    const target = jumpTo ?? resource.bookmark.page
+    const target = jumpTo ?? bookmarkPage
     if (target && target > 1) setTimeout(() => goTo(target), 60)
-  }, [doc, jumpTo, resource.bookmark.page, goTo])
+  }, [doc, jumpTo, bookmarkPage, goTo])
   useEffect(() => {
     if (doc && jumpTo) setTimeout(() => goTo(jumpTo), 60)
   }, [doc, jumpTo, goTo])
 
-  // The page you're on is your bookmark, saved as you read (and counted in the session).
-  const savedPage = useRef(resource.bookmark.page)
+  // The page you're on is your bookmark, saved as you read (and counted in the session) — but only
+  // when the book is open for a goal or task. Opened from a wiki page on its own, there is nothing
+  // to move a bookmark on, so it simply reads.
+  const savedPage = useRef(bookmarkPage)
   useEffect(() => {
-    if (!doc || page === savedPage.current) return
+    if (!doc || !refItem || page === savedPage.current) return
     const t = setTimeout(() => {
       savedPage.current = page
       api.saveBookmark(refItem.type, refItem.id, { resourceId: resource.id, page })
         .then(() => qc.invalidateQueries({ queryKey: keys.dashboard }), () => {})
     }, 1500)
     return () => clearTimeout(t)
-  }, [page, doc, refItem.type, refItem.id, resource.id, qc])
+  }, [page, doc, refItem, resource.id, qc])
 
   const onScroll = () => {
     const box = scroll.current
@@ -223,32 +231,47 @@ function ReaderView({ refItem, resource, jumpTo }: { refItem: ItemRef; resource:
 
 export function ReaderWindow({ deskRef }: { deskRef: React.RefObject<HTMLDivElement | null> }) {
   const reader = useUi((s) => s.reader)
-  const detail = useDetail(reader?.type ?? 'goal', reader?.id ?? 0, !!reader)
+  const owner = reader?.type && reader.id ? { type: reader.type, id: reader.id } : null
+  // With a goal or task, the book comes from its attachments, carrying your place in it. Without
+  // one — a book linked from a wiki page — it is fetched on its own and simply opens.
+  const detail = useDetail(owner?.type ?? 'goal', owner?.id ?? 0, !!owner)
+  const alone = useQuery({
+    queryKey: ['resource', reader?.resourceId ?? 0],
+    queryFn: () => api.resource(reader!.resourceId),
+    enabled: !!reader && !owner,
+  })
   if (!reader) return null
-  const resource = detail.data?.resources.find((r) => r.id === reader.resourceId)
+  const attached = detail.data?.resources.find((r) => r.id === reader.resourceId)
+  const resource = attached ?? (owner ? undefined : alone.data)
+  const loading = owner ? detail.isPending : alone.isPending
+
   return (
     <FloatingWindow
       id="reader"
       title={resource?.title ?? 'Book'}
       icon={<BookOpen size={17} />}
-      meta={detail.data?.item.title}
+      meta={owner ? detail.data?.item.title : undefined}
       closable
       onClose={() => setUi({ reader: null })}
       deskRef={deskRef}
       className="window-reader"
       defaultRect={(d) => {
-        const w = Math.min(820, d.width - 32)
-        return { x: Math.max(16, (d.width - w) / 2), y: 16, w, h: Math.max(400, d.height - 32) }
+        // Big, centred, and never taller than the desk — a book wants room, but not at the cost of
+        // its own toolbar ending up above the desk where it can't be reached.
+        const w = Math.min(880, Math.max(320, d.width - 32))
+        const h = Math.max(320, d.height - 32)
+        return { w, h, x: (d.width - w) / 2, y: (d.height - h) / 2 }
       }}
     >
-      {detail.isPending ? <p className="muted pad">Loading…</p> : !resource ? (
+      {loading ? <p className="muted pad">Loading…</p> : !resource ? (
         <Empty action={<Button size="sm" onClick={() => setUi({ reader: null })}>Close</Button>}>
-          This book is no longer attached to the {reader.type}.
+          {owner ? `This book is no longer attached to the ${owner.type}.` : 'This book no longer exists.'}
         </Empty>
       ) : !resource.hasFile ? (
         <Empty>This resource has no file uploaded.</Empty>
       ) : (
-        <ReaderView key={`${reader.type}:${reader.id}:${resource.id}`} refItem={reader} resource={resource} jumpTo={reader.page} />
+        <ReaderView key={`${owner?.type ?? 'none'}:${owner?.id ?? 0}:${resource.id}`}
+          refItem={owner} resource={resource} jumpTo={reader.page} />
       )}
     </FloatingWindow>
   )

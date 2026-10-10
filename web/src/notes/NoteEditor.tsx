@@ -4,23 +4,30 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import Image from '@tiptap/extension-image'
-import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { Placeholder } from '@tiptap/extensions'
 import { Markdown } from '@tiptap/markdown'
 import * as Menu from '@radix-ui/react-dropdown-menu'
 import {
-  Bold, Code, Heading2, Heading3, ImagePlus, Italic, List, ListOrdered, ListTodo, MoreHorizontal, Quote, SquareCode, Strikethrough, Trash2,
+  Bold, BookOpen, Code, Heading2, Heading3, ImagePlus, Italic, List, ListOrdered, ListTodo, MoreHorizontal, Quote,
+  SquareArrowOutUpRight, SquareCode, Strikethrough, Table, Trash2,
 } from 'lucide-react'
-import { api, ApiError, onReconnect } from '../api.ts'
-import { keys } from '../hooks.ts'
-import { closeNoteTab, openDetails, openReader } from '../ui-store.ts'
+import { api, ApiError, fileUrl, onReconnect } from '../api.ts'
+import { keys, useSpaces } from '../hooks.ts'
+import { closeNoteTab, openDetails, openPageById, openReader, openWikiPage } from '../ui-store.ts'
+import { openReadingWindow } from '../resources/resources.tsx'
+import { noteExtensions } from './extensions.ts'
+import { TableShortcut } from './tableShortcut.ts'
+import { isWikiPath, wikiPath } from '../wiki/route.ts'
+import { announce } from '../wiki/sync.ts'
 import { Button, HostWindow, IconButton, toast, usePortalContainer } from '../ui.tsx'
 import { trashNoteWithUndo } from './actions.ts'
-import { parseDeskworkLink, registerNoteEditor } from './insert.ts'
+import { registerNoteEditor } from './insert.ts'
+import { LinkPicker, type PickerState } from './linkPicker.ts'
+import { LinkMenu } from './LinkMenu.tsx'
+import { Backlinks } from '../wiki/Backlinks.tsx'
+import { parseLink } from '../../../shared/links.ts'
 import { setStatus, statuses, useNoteStatus, type SaveStatus } from './noteStatus.ts'
-import type { Note } from '../../../shared/types.ts'
+import type { ItemType, Note, Space } from '../../../shared/types.ts'
 
 const STATUS_TEXT: Record<SaveStatus, string> = {
   saved: 'Saved',
@@ -61,6 +68,7 @@ function Toolbar({ editor, onImage }: { editor: Editor; onImage: () => void }) {
       h2: e.isActive('heading', { level: 2 }), h3: e.isActive('heading', { level: 3 }), bold: e.isActive('bold'),
       italic: e.isActive('italic'), strike: e.isActive('strike'), code: e.isActive('code'), bullet: e.isActive('bulletList'),
       ordered: e.isActive('orderedList'), task: e.isActive('taskList'), quote: e.isActive('blockquote'), codeBlock: e.isActive('codeBlock'),
+      table: e.isActive('table'),
     }),
   })
   const b = (label: string, on: boolean, run: () => void, icon: React.ReactNode) => (
@@ -83,6 +91,7 @@ function Toolbar({ editor, onImage }: { editor: Editor; onImage: () => void }) {
       {b('Checklist', active.task, () => c().toggleTaskList().run(), <ListTodo size={17} />)}
       {b('Quote', active.quote, () => c().toggleBlockquote().run(), <Quote size={16} />)}
       {b('Code block', active.codeBlock, () => c().toggleCodeBlock().run(), <SquareCode size={17} />)}
+      {b('Table', active.table, () => c().insertTable({ rows: 3, cols: 2, withHeaderRow: true }).run(), <Table size={17} />)}
       <span className="tool-sep" />
       {b('Add an image (or paste one)', false, onImage, <ImagePlus size={17} />)}
     </div>
@@ -91,7 +100,9 @@ function Toolbar({ editor, onImage }: { editor: Editor; onImage: () => void }) {
 
 // ---------- editor ----------
 
-function LoadedNote({ note }: { note: Note }) {
+function LoadedNote({ note, noun }: { note: Note; noun: Noun }) {
+  const [picker, setPicker] = useState<PickerState | null>(null)
+  const spaces = useSpaces()
   const qc = useQueryClient()
   const id = note.id
   const draft = useRef(readDraft(id))
@@ -122,6 +133,8 @@ function LoadedNote({ note }: { note: Note }) {
       const saved = await api.updateNote(id, { title: titleRef.current, body })
       qc.setQueryData(keys.note(id), saved)
       qc.invalidateQueries({ queryKey: ['notes', saved.itemType, saved.itemId] })
+      if (saved.spaceId) qc.invalidateQueries({ queryKey: keys.spacePages(saved.spaceId) })
+      announce({ kind: 'note', id }) // the wiki may be open in another window too
       if (revision.current === rev) {
         clearDraft(id)
         setStatus(id, 'saved')
@@ -183,12 +196,11 @@ function LoadedNote({ note }: { note: Note }) {
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ link: { openOnClick: false, autolink: true, defaultProtocol: 'https', protocols: ['deskwork'] } }),
-      Image.configure({ allowBase64: false }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Placeholder.configure({ placeholder: 'Write here. Paste screenshots straight in; # for a heading, - for a list, [] for a checklist.' }),
+      ...noteExtensions,
+      TableShortcut,
+      Placeholder.configure({ placeholder: 'Write here. Paste screenshots straight in; # for a heading, - for a list, [[ to link.' }),
       Markdown,
+      LinkPicker(setPicker),
     ],
     content: draft.current?.body ?? note.body,
     contentType: 'markdown',
@@ -199,10 +211,24 @@ function LoadedNote({ note }: { note: Note }) {
         // A page link put in by the reader opens that book at that page.
         click: (_view, event) => {
           const href = (event.target as HTMLElement).closest('a')?.getAttribute('href') ?? ''
-          const link = parseDeskworkLink(href)
-          if (!link) return false
+          const ref = parseLink(href)
+          if (!ref) return false
           event.preventDefault()
-          openReader({ type: note.itemType, id: note.itemId }, link.resourceId, link.page)
+          // The wiki's own window has no desk to put a goal or a book on, so those open in the
+          // main one; page links it handles itself.
+          const standalone = isWikiPath()
+          if (ref.kind === 'goal' || ref.kind === 'task') {
+            if (standalone) window.open(`/?open=${ref.kind}:${ref.id}`, 'deskwork-main')
+            else openDetails({ type: ref.kind, id: ref.id })
+          } else if (ref.kind === 'page') {
+            openPageById(ref.id)
+          } else if (standalone) {
+            openReadingWindow(`${fileUrl(ref.id)}#page=${ref.page ?? 1}`, `deskwork-book-${ref.id}`)
+          } else {
+            // Reading counts toward the goal the page was written from, or the goal whose space it
+            // sits in; from a space of your own the book simply opens.
+            openReader(readingOwner.current, ref.id, ref.page ?? 1)
+          }
           return true
         },
       },
@@ -249,12 +275,21 @@ function LoadedNote({ note }: { note: Note }) {
     if (statuses.get(id) !== 'saved') void save()
   }, [id, save])
 
-  const trash = () => trashNoteWithUndo(qc, { id, title: titleRef.current, itemType: note.itemType, itemId: note.itemId })
+  // Who the reading belongs to, worked out once so the click handler stays simple.
+  const readingOwner = useRef<{ type: ItemType; id: number } | null>(null)
+  readingOwner.current = note.itemType && note.itemId
+    ? { type: note.itemType, id: note.itemId }
+    : (() => {
+        const space = spaces.data?.find((s: Space) => s.id === note.spaceId)
+        return space?.goalId ? { type: 'goal' as const, id: space.goalId } : null
+      })()
+
+  const trash = () => trashNoteWithUndo(qc, { id, title: titleRef.current, itemType: note.itemType, itemId: note.itemId, spaceId: note.spaceId })
 
   return (
     <div className="note">
       <div className="note-head">
-        <input className="note-title" value={title} placeholder="Untitled note" aria-label="Note title" maxLength={200}
+        <input className="note-title" value={title} placeholder={`Untitled ${noun}`} aria-label={`${noun === 'page' ? 'Page' : 'Note'} title`} maxLength={200}
           onChange={(e) => {
             setTitle(e.target.value)
             titleRef.current = e.target.value
@@ -263,9 +298,19 @@ function LoadedNote({ note }: { note: Note }) {
           }}
           onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), editor?.commands.focus('start'))} />
         <div className="note-meta">
-          <button type="button" className="note-item-link" onClick={() => openDetails({ type: note.itemType, id: note.itemId })}>
-            {note.itemType === 'goal' ? 'Goal' : 'Task'}: {note.itemTitle}
-          </button>
+          {note.itemType && note.itemId && note.itemTitle && (
+            <button type="button" className="note-item-link" onClick={() => openDetails({ type: note.itemType!, id: note.itemId! })}>
+              {note.itemType === 'goal' ? 'Goal' : 'Task'}: {note.itemTitle}
+            </button>
+          )}
+          {/* Every note is a wiki page, so it can always be opened where it lives. */}
+          {note.spaceSlug && note.spaceName && (
+            <button type="button" className="note-item-link" title="Show this page in the Wiki window"
+              onClick={() => openWikiPage(note.spaceSlug, note.id)}>
+              {/* The space is usually named after the goal named just above it. */}
+              <BookOpen size={13} /> {note.spaceName === note.itemTitle ? 'In the wiki' : note.spaceName}
+            </button>
+          )}
           <span className={`note-status is-${status}`} role="status" title={error ?? undefined}>
             {status === 'error' && error ? `Not saved: ${error}` : STATUS_TEXT[status]}
           </span>
@@ -276,6 +321,18 @@ function LoadedNote({ note }: { note: Note }) {
             </Menu.Trigger>
             <Menu.Portal container={usePortalContainer()}>
               <Menu.Content className="menu" align="end" sideOffset={4}>
+                {note.spaceSlug && (
+                  <>
+                    <Menu.Item className="menu-item" onSelect={() => openWikiPage(note.spaceSlug, note.id)}>
+                      <BookOpen size={15} /> Show in the wiki
+                    </Menu.Item>
+                    <Menu.Item className="menu-item"
+                      onSelect={() => openReadingWindow(wikiPath({ slug: note.spaceSlug! }, { slug: note.slug, id: note.id }), 'deskwork-wiki')}>
+                      <SquareArrowOutUpRight size={15} /> Open in its own window
+                    </Menu.Item>
+                    <span className="menu-sep" />
+                  </>
+                )}
                 <Menu.Item className="menu-item" onSelect={trash}><Trash2 size={15} /> Move to Trash</Menu.Item>
               </Menu.Content>
             </Menu.Portal>
@@ -283,8 +340,10 @@ function LoadedNote({ note }: { note: Note }) {
         </div>
       </div>
       {editor && <Toolbar editor={editor} onImage={() => fileInput.current?.click()} />}
+      {picker && <LinkMenu state={picker} />}
       <div className="note-scroll" onClick={(e) => e.target === e.currentTarget && editor?.commands.focus('end')}>
         <EditorContent editor={editor} />
+        <Backlinks kind="pages" id={id} />
       </div>
       <input ref={fileInput} type="file" accept="image/*" multiple hidden
         onChange={(e) => {
@@ -295,7 +354,9 @@ function LoadedNote({ note }: { note: Note }) {
   )
 }
 
-export function NoteEditor({ id }: { id: number }) {
+type Noun = 'note' | 'page'
+
+export function NoteEditor({ id, noun = 'note' }: { id: number; noun?: Noun }) {
   const q = useQuery({ queryKey: keys.note(id), queryFn: () => api.note(id), staleTime: Infinity, retry: 1 })
   if (q.isPending) return <p className="muted pad">Loading…</p>
   if (q.error) {
@@ -310,10 +371,10 @@ export function NoteEditor({ id }: { id: number }) {
   if (q.data.deletedAt) {
     return (
       <div className="pad note-missing">
-        <p>“{q.data.title || 'Untitled note'}” is in the Trash.</p>
+        <p>“{q.data.title || `Untitled ${noun}`}” is in the Trash.</p>
         <Button size="sm" onClick={() => closeNoteTab(id)}>Close tab</Button>
       </div>
     )
   }
-  return <LoadedNote key={id} note={q.data} />
+  return <LoadedNote key={id} note={q.data} noun={noun} />
 }

@@ -17,6 +17,11 @@
   --brass-strong: #8f6517;
   --brass-soft: #f3e6c6;
   --brass-ink: #2e2006;
+  /* A link to another page, goal or book, set in running text: it has to read as one word and
+     stand clear of the paper without shouting. */
+  --chip: #f7e2ab;
+  --chip-edge: #d9b35e;
+  --chip-ink: #4a3203;
   --sage-soft: #dce8dd;
   --sage-ink: #2c5a3f;
   --danger: #a8432f;
@@ -81,6 +86,9 @@
   --brass-strong: #e6bd62;
   --brass-soft: #3b3220;
   --brass-ink: #1f1604;
+  --chip: #51411c;
+  --chip-edge: #8a6f2c;
+  --chip-ink: #f6d68a;
   --sage-soft: #273a2f;
   --sage-ink: #9fd0b0;
   --danger: #e58169;
@@ -1095,8 +1103,19 @@ button.session-toggle:hover { color: var(--ink); background: var(--paper-2); }
   .session-time { min-width: 0; }
   .session-line { flex-wrap: wrap; }
   .session-body { margin-left: 12px; }
-  /* The goal window and the reader take the whole screen on a phone or a narrow window. */
-  .window.window-item, .window.window-reader { position: fixed; inset: 0; z-index: 150; max-height: none; border-radius: 0; }
+  /* The goal window and the reader take the whole screen on a phone or a narrow window — but
+     below the top bar, never over it. A window starting at the top of the viewport puts its own
+     header in the bar's strip, where neither can be used. */
+  .window.window-item, .window.window-reader {
+    position: fixed;
+    top: var(--topbar-h, 64px);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40; /* under the top bar (50), so the bar wins any overlap */
+    max-height: none;
+    border-radius: 0;
+  }
 }
 
 /* ---------- toasts with an action (Undo) ---------- */
@@ -1185,7 +1204,7 @@ button.session-toggle:hover { color: var(--ink); background: var(--paper-2); }
 .note-title::placeholder { color: var(--muted); opacity: 0.7; }
 .note-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; color: var(--muted); }
 .note-meta .icon-btn { margin-left: auto; }
-.note-item-link { padding: 0; border: 0; background: none; color: var(--ink-2); font: inherit; cursor: pointer; }
+.note-item-link { padding: 0; border: 0; background: none; color: var(--ink-2); font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
 .note-item-link:hover { color: var(--ink); text-decoration: underline; }
 .note-status.is-saved { color: var(--muted); }
 .note-status.is-offline, .note-status.is-error { color: var(--danger); }
@@ -1243,6 +1262,13 @@ button.session-toggle:hover { color: var(--ink); background: var(--paper-2); }
 .note-prose img[alt='Uploading…'] { opacity: 0.55; outline: 2px dashed var(--brass); outline-offset: 2px; }
 .note-prose img.ProseMirror-selectednode { outline: 3px solid var(--focus); outline-offset: 2px; }
 .note-prose hr { border: 0; border-top: 1px solid var(--edge); margin: 1.2em 0; }
+/* Tables scroll sideways inside the note rather than pushing the window wider. */
+.note-prose .tableWrapper { overflow-x: auto; }
+.note-prose table { border-collapse: collapse; table-layout: fixed; width: 100%; margin: 0; overflow: hidden; }
+.note-prose th, .note-prose td { border: 1px solid var(--edge); padding: 5px 10px; vertical-align: top; min-width: 4em; position: relative; }
+.note-prose th { background: var(--paper-2); font-weight: 650; text-align: left; }
+.note-prose td > p, .note-prose th > p { margin: 0; }
+.note-prose .selectedCell::after { content: ''; position: absolute; inset: 0; background: var(--focus); opacity: 0.12; pointer-events: none; }
 .note-prose p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
@@ -1540,3 +1566,314 @@ button.session-toggle:hover { color: var(--ink); background: var(--paper-2); }
   color: var(--muted);
 }
 .rows + .list-section { border-top: 1px solid var(--edge); margin-top: 4px; }
+
+/* Manage → Spaces */
+.space-mark { color: var(--muted); flex-shrink: 0; }
+.row.is-archived .row-title { color: var(--ink-2); }
+.window-filters { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.window-body > .window-filters:not(:empty) { padding: 10px 14px 6px; }
+
+/* ---------- wiki ---------- */
+
+.window-wiki .window-body { overflow: hidden; }
+.wiki {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.wiki-side {
+  width: 236px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--edge);
+  background: color-mix(in srgb, var(--paper-2) 45%, transparent);
+}
+.wiki-side-body { flex: 1; min-height: 0; overflow: auto; padding-bottom: 8px; }
+.wiki-side-foot { border-top: 1px solid var(--edge); padding: 10px; }
+.wiki-side-foot .btn { width: 100%; justify-content: center; }
+.wiki-side-head { padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.wiki-back {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 500 13px/1 var(--font-ui);
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;
+}
+.wiki-back:hover { color: var(--ink); }
+.wiki-space-title { font: 650 16px/1.25 var(--font-display); margin: 2px 0 0; overflow-wrap: anywhere; }
+
+.wiki-spaces, .wiki-pages { padding: 0 6px; }
+.wiki-space, .wiki-page {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.wiki-space:hover, .wiki-page:hover { background: var(--paper-2); color: var(--ink); }
+.wiki-space-icon { display: inline-flex; width: 16px; justify-content: center; color: var(--muted); flex-shrink: 0; }
+.wiki-space-name, .wiki-page-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-space-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.wiki-page { flex-direction: column; align-items: flex-start; gap: 1px; }
+.wiki-tree .wiki-page {
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding-left: calc(4px + var(--depth, 0) * 15px);
+}
+.wiki-page-row { position: relative; }
+.wiki-page-row[data-dragging='true'] { opacity: 0.4; }
+/* before/after draw a line between rows; inside highlights the page you'd be filing under. */
+.wiki-page-row[data-drop-pos]::after {
+  content: '';
+  position: absolute;
+  left: calc(10px + var(--depth, 0) * 15px);
+  right: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--brass);
+  pointer-events: none;
+}
+.wiki-page-row[data-drop-pos='before']::after { top: -1px; }
+.wiki-page-row[data-drop-pos='after']::after { bottom: -1px; }
+.wiki-page-row[data-drop-pos='inside']::after { display: none; }
+.wiki-page-row[data-drop-pos='inside'] > .wiki-page {
+  background: var(--brass-soft);
+  color: var(--brass-ink);
+  box-shadow: inset 0 0 0 1px var(--brass);
+}
+.wiki-twist {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.wiki-twist[role='button']:hover { background: var(--edge); color: var(--ink); }
+.wiki-twist svg { transition: transform 120ms ease; }
+.wiki-twist svg.is-open { transform: rotate(90deg); }
+.wiki-twist-leaf { opacity: 0.55; }
+.wiki-page-text { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.wiki-tree .wiki-page-title { font-weight: 500; }
+.wiki-page-kids {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--paper-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wiki-crumb-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px 0;
+  max-width: 46rem;
+  margin-inline: auto;
+  width: 100%;
+}
+.wiki-crumbs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.wiki-crumbs button { padding: 1px 3px; border: 0; border-radius: 4px; background: none; font: inherit; color: inherit; cursor: pointer; }
+.wiki-crumbs button:hover { background: var(--paper-2); color: var(--ink); }
+.wiki-crumb { display: inline-flex; align-items: center; gap: 2px; }
+.wiki-crumb [aria-current] { color: var(--ink-2); padding: 1px 3px; }
+.wiki-page-title { font-weight: 600; width: 100%; }
+.wiki-page-when { color: var(--muted); font-size: 12px; }
+.wiki-page.is-active { background: var(--brass-soft); color: var(--brass-ink); }
+.wiki-page.is-active .wiki-page-when { color: color-mix(in srgb, var(--brass-ink) 70%, transparent); }
+
+.wiki-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 12px;
+  padding: 0 8px;
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  background: var(--paper-input);
+  color: var(--muted);
+}
+.wiki-search input { flex: 1; min-width: 0; border: 0; background: none; padding: 7px 0; font: inherit; color: var(--ink); }
+.wiki-search input:focus { outline: none; }
+.wiki-more {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 6px 12px;
+  padding: 7px;
+  border: 1px dashed var(--edge);
+  border-radius: 7px;
+  background: none;
+  font: 500 13px/1 var(--font-ui);
+  color: var(--muted);
+  cursor: pointer;
+}
+.wiki-more:hover { color: var(--ink); border-color: var(--muted); }
+
+.wiki-hits { padding: 0 6px; display: flex; flex-direction: column; gap: 2px; }
+.wiki-hit {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.wiki-hit:hover { background: var(--paper-2); }
+.wiki-hit-title { font-weight: 600; color: var(--ink); }
+.wiki-hit-where { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-hit-snippet {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wiki-hit mark { background: var(--brass-soft); color: var(--brass-ink); border-radius: 3px; padding: 0 1px; }
+
+.wiki-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.wiki-main .note { flex: 1; min-height: 0; }
+/* A page is read, not skimmed in a column: keep the measure short however wide the window is. */
+.wiki-main .note-head, .wiki-main .note-scroll > * { max-width: 46rem; margin-inline: auto; width: 100%; }
+.wiki-main .note-prose { max-width: none; }
+.space-goal { display: inline-flex; align-items: center; gap: 4px; }
+
+/* the wiki in its own window */
+.wiki-app { height: 100dvh; display: flex; flex-direction: column; }
+.wiki-topbar { justify-content: flex-start; gap: 18px; }
+.wiki-full { flex: 1; min-height: 0; background: var(--paper); }
+.wiki-full .wiki-side { width: 280px; }
+
+@media (max-width: 640px) {
+  .wiki { flex-direction: column; }
+  .wiki-side { width: auto; max-height: 45%; border-right: 0; border-bottom: 1px solid var(--edge); }
+  .wiki-full .wiki-side { width: auto; }
+}
+
+/* ---------- links between pages ---------- */
+
+.note-prose a[href^='deskwork:'] {
+  display: inline;
+  padding: 1px 5px 1px 4px;
+  border-radius: 5px;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px var(--chip-edge);
+  color: var(--chip-ink);
+  font-weight: 500;
+  text-decoration: none;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.note-prose a[href^='deskwork:']:hover { background: var(--brass); color: var(--brass-ink); box-shadow: inset 0 0 0 1px var(--brass); }
+
+.link-menu {
+  position: fixed;
+  z-index: 60;
+  width: 310px;
+  max-height: 232px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+}
+.link-option button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.link-option.is-active button { background: var(--brass-soft); color: var(--brass-ink); }
+.link-option-icon { display: inline-flex; color: var(--muted); flex-shrink: 0; }
+.link-option.is-active .link-option-icon { color: inherit; }
+.link-option-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.link-option-hint { color: var(--muted); font-size: 12px; flex-shrink: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-option.is-active .link-option-hint { color: color-mix(in srgb, var(--brass-ink) 70%, transparent); }
+
+.backlinks { margin: 28px 0 8px; padding-top: 14px; border-top: 1px solid var(--edge); }
+.backlinks-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font: 650 12px/1.3 var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.backlink {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  margin-left: -8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.backlink:hover { background: var(--paper-2); }
+.backlink-title { font-weight: 600; color: var(--ink); }
+.backlink-where { font-size: 12px; color: var(--muted); }
+
+/* the space's home page sits at the top of its tree and doesn't move */
+.wiki-page-row.is-home > .wiki-page { cursor: pointer; font-weight: 600; }
+.wiki-page-row.is-home .wiki-twist { color: var(--brass); }
+.wiki-page-row.is-home + .wiki-page-row { margin-top: 2px; }
+.wiki-new-space { margin: 0 12px 8px; }
+
+/* a space's Trash */
+.wiki-trash-row { display: flex; align-items: center; gap: 2px; }
+.wiki-trash-row .wiki-page { flex: 1; min-width: 0; }
+.wiki-trash-actions { display: flex; flex-shrink: 0; opacity: 0; }
+.wiki-trash-row:hover .wiki-trash-actions, .wiki-trash-row:focus-within .wiki-trash-actions { opacity: 1; }
+.wiki-trash-foot { padding: 10px 12px; }
+.wiki-side-body > .notes-hint { padding: 0 14px 8px; font-size: 13px; }

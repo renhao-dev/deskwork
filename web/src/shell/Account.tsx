@@ -38,7 +38,11 @@ export function Login() {
         </Field>
         <ErrorText error={login.error} />
         <Button variant="primary" type="submit" disabled={login.isPending || !username}>Sign in</Button>
-        <p className="login-hint">First time here? Sign in as admin / admin, then change the password in Settings.</p>
+        <p className="login-hint">
+          Your data is encrypted with your password, so signing in is what unlocks it — including
+          after Deskwork restarts. First time here? Sign in as admin / admin, then change the
+          password in Settings.
+        </p>
       </form>
     </main>
   )
@@ -154,7 +158,9 @@ export function SettingsDialog() {
         <h3>Password</h3>
         <form className="field-row" onSubmit={(e) => (e.preventDefault(), pw.mutate())}>
           <Field label="Current password"><input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} /></Field>
-          <Field label="New password"><input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /></Field>
+          <Field label="New password" hint="This password is the only thing that can unlock your data. There is no way to reset it.">
+            <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+          </Field>
           <Button type="submit" className="align-end" disabled={!current || !next || pw.isPending}>Change password</Button>
         </form>
         <ErrorText error={pw.error} />
@@ -171,8 +177,6 @@ export function UsersDialog() {
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
-  const [resetting, setResetting] = useState<User | null>(null)
-  const [newPw, setNewPw] = useState('')
   const [deleting, setDeleting] = useState<User | null>(null)
   const invalidate = () => qc.invalidateQueries({ queryKey: keys.users })
 
@@ -199,7 +203,7 @@ export function UsersDialog() {
                   onChange={(e) => api.updateUser(u.id, { isAdmin: e.target.checked }).then(invalidate, toastError)} />
                 Admin
               </label>
-              <Button size="sm" variant="ghost" onClick={() => { setResetting(u); setNewPw('') }}><KeyRound size={14} /> Reset password</Button>
+              {u.id === me?.id && <Button size="sm" variant="ghost" onClick={() => setUi({ dialog: 'settings' })}><KeyRound size={14} /> Change password</Button>}
               {u.id !== me?.id && <IconButton label={`Delete ${u.username}`} className="danger-hover" onClick={() => setDeleting(u)}><Trash2 size={15} /></IconButton>}
             </li>
           ))}
@@ -211,16 +215,10 @@ export function UsersDialog() {
           <Button type="submit" variant="primary" className="align-end" disabled={!name || !password || create.isPending}><UserPlus size={15} /> Add user</Button>
         </form>
         <ErrorText error={create.error} />
-      </Dialog>
-
-      <Dialog open={!!resetting} onClose={() => setResetting(null)} title={`New password for ${resetting?.username}`}
-        footer={<>
-          <Button variant="ghost" onClick={() => setResetting(null)}>Cancel</Button>
-          <Button variant="primary" disabled={newPw.length < 4} onClick={() =>
-            api.updateUser(resetting!.id, { password: newPw }).then(() => { toast('Password reset'); setResetting(null) }, toastError)
-          }>Set password</Button>
-        </>}>
-        <Field label="New password" hint="They'll be signed out everywhere."><input value={newPw} onChange={(e) => setNewPw(e.target.value)} autoFocus /></Field>
+        <p className="login-hint">
+          Everyone's data is encrypted with their own password, so nobody — not even an admin — can
+          read it or reset it. A forgotten password cannot be recovered.
+        </p>
       </Dialog>
 
       <Confirm open={!!deleting} onClose={() => setDeleting(null)} title={`Delete ${deleting?.username}?`} confirmLabel="Delete user"

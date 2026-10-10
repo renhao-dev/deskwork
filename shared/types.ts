@@ -49,6 +49,8 @@ export interface User {
 export interface Goal {
   id: number
   title: string
+  /** The wiki space this goal's notes live in. Every goal has one; it outlives the goal. */
+  spaceId: number | null
   description: string
   budgetMinutes: number
   pointsTarget: number | null
@@ -203,10 +205,74 @@ export const DEFAULT_SETTINGS: UserSettings = {
   notifications: { enabled: true, pomodoro: true },
 }
 
+/** A wiki space: the top of one tree of pages. Goals get one each; you can also make your own. */
+export interface Space {
+  id: number
+  name: string
+  slug: string
+  icon: string | null
+  /** The space's home page. Every other page in the space is filed under it. */
+  homeId: number | null
+  /** The goal this space was made for, if any. */
+  goalId: number | null
+  goalTitle: string | null
+  pageCount: number
+  createdAt: number
+  archivedAt: number | null
+}
+
+export interface SpaceInput {
+  name?: string
+  icon?: string | null
+  archived?: boolean
+}
+
+/** One page a search turned up, with the matching words marked in the text. */
+export interface SearchHit {
+  id: number
+  title: string
+  slug: string
+  spaceId: number
+  spaceName: string
+  spaceSlug: string
+  /** Where it sits: "Hebrew › Verbs". Empty for a page at the top of its space. */
+  path: string
+  /** A line or two around the match; the words themselves wrapped in «». */
+  snippet: string
+  updatedAt: number
+}
+
+/** A page that links to the thing you're looking at. */
+export interface Backlink {
+  id: number
+  title: string
+  slug: string
+  spaceId: number
+  spaceName: string
+  spaceSlug: string
+  path: string
+  updatedAt: number
+}
+
+/** Something a link can point at, as offered by the [[ picker. */
+export interface LinkTarget {
+  kind: 'page' | 'goal' | 'task' | 'book'
+  id: number
+  title: string
+  /** Where it is or what it is — a space name, "Goal", a book's author. */
+  hint: string
+  address: string
+}
+
 export interface NoteSummary {
   id: number
-  itemType: ItemType
-  itemId: number
+  /** Where the page lives in the wiki. */
+  spaceId: number | null
+  parentId: number | null
+  slug: string
+  /** The goal or task the page was written from, if it still exists. */
+  itemType: ItemType | null
+  itemId: number | null
   title: string
   excerpt: string // the start of the text, without Markdown
   firstImage: string | null
@@ -217,5 +283,7 @@ export interface NoteSummary {
 
 export interface Note extends NoteSummary {
   body: string // Markdown
-  itemTitle: string
+  itemTitle: string | null
+  spaceName: string | null
+  spaceSlug: string | null
 }

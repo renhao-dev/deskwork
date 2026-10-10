@@ -10,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useAction, useDetail, useRefreshAll } from '../hooks.ts'
 import { closeDetails, openDetails, seekPlayer, setUi, useUi, type ItemRef } from '../ui-store.ts'
 import { Button, Confirm, Dialog, DurationInput, Empty, ErrorText, Explained, Field, IconButton, ProgressBar, toast, toastError } from '../ui.tsx'
+import { Backlinks } from '../wiki/Backlinks.tsx'
 import { KIND_LABEL, KindIcon, bookmarkLabel, openResource, parseYouTube, playsInApp } from '../resources/resources.tsx'
 import { PositionEditor } from '../resources/PositionEditor.tsx'
 import { ResourceBrowser, ResourceRowTitle, resourceMeta, type FolderFilter } from '../resources/ResourceBrowser.tsx'
@@ -251,6 +252,7 @@ export function ItemWindow({ deskRef }: { deskRef: React.RefObject<HTMLDivElemen
                 </div>
               </form>
               <ResourcesSection refItem={ref} resources={detail.data!.resources} />
+              <Backlinks kind={type === 'goal' ? 'goals' : 'tasks'} id={ref.id} />
             </Tabs.Content>
             <Tabs.Content value="sessions" className="tab-panel item-panel">
               <ItemSessions refItem={ref} />

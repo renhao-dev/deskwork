@@ -95,10 +95,9 @@ export function openResource(r: Resource | AttachedResource, ref?: ItemRef) {
   switch (r.kind) {
     case 'pdf':
       if (!r.hasFile) return toast('Upload the book file first', 'error')
-      // Read it inside Deskwork, so selections can go into notes.
-      if (ref) return openReader(ref, r.id, b?.page ?? undefined)
-      openReadingWindow(`${fileUrl(r.id)}${b?.page ? `#page=${b.page}` : ''}`, `deskwork-book-${r.id}`)
-      return
+      // Read it inside Deskwork, so selections can go into notes. Opened from the library rather
+      // than from a goal it still opens; there is just no bookmark of yours to move.
+      return openReader(ref ?? null, r.id, b?.page ?? undefined)
     case 'video':
       if (ref && playsInApp(r)) return openPlayer(ref, r.id)
       if (r.videoSource === 'file') {

@@ -4,7 +4,7 @@ import type { ItemType } from '../../shared/types.ts'
 
 export type WindowId =
   | 'goals' | 'tasks' | 'completed' | 'player'
-  | 'manage-goals' | 'manage-tasks' | 'manage-resources' | 'history' | 'item' | 'notes' | 'reader'
+  | 'manage-goals' | 'manage-tasks' | 'manage-resources' | 'manage-spaces' | 'history' | 'item' | 'notes' | 'reader' | 'wiki'
 
 export interface ItemRef { type: ItemType; id: number }
 
@@ -18,8 +18,11 @@ export interface UiState {
   resourceEditing: { id: number | null; attachTo?: ItemRef; folderId?: number | null } | null
   attaching: ItemRef | null
   player: (ItemRef & { resourceId: number }) | null
-  /** The book being read in Deskwork, and the page to jump to when it opens. */
-  reader: (ItemRef & { resourceId: number; page?: number; n?: number }) | null
+  /**
+   * The book being read in Deskwork, and the page to jump to when it opens. The goal or task is
+   * optional: a book linked from a wiki page opens on its own, it just has no bookmark to move.
+   */
+  reader: { resourceId: number; page?: number; n?: number; type?: ItemType; id?: number } | null
   dialog: 'settings' | 'users' | null
   /** A request for the player to start playing (e.g. from Start), once it's ready. */
   playerPlay: (ItemRef & { resourceId: number; n: number; sync?: boolean }) | null
@@ -27,6 +30,8 @@ export interface UiState {
   playerSeek: (ItemRef & { resourceId: number; seconds: number; videoIndex: number | null; n: number }) | null
   noteTabs: number[] // notes open in the Notes window
   noteActive: number | null
+  /** Where the Wiki window is: a space's slug, and the page open in it. */
+  wiki: { spaceSlug: string | null; pageId: number | null }
 }
 
 const PLAYER_KEY = 'deskwork.player'
@@ -54,6 +59,7 @@ let state: UiState = {
   playerSeek: null,
   noteTabs: [],
   noteActive: null,
+  wiki: { spaceSlug: null, pageId: null },
 }
 const initialPlayer = loadPlayer()
 if (initialPlayer) state = { ...state, player: initialPlayer, open: ['player'], focusOrder: [...state.focusOrder, 'player'] }
@@ -154,7 +160,22 @@ export function closeNoteTab(id: number) {
 
 let readerCount = 0
 /** Open a book in Deskwork's reader, optionally at a page. */
-export function openReader(ref: ItemRef, resourceId: number, page?: number) {
-  setUi({ reader: { ...ref, resourceId, page, n: ++readerCount } })
+/** Shows a page in the Wiki window — from a note's menu, a link, anywhere. */
+export function openWikiPage(spaceSlug: string | null, pageId: number | null) {
+  setUi({ wiki: { spaceSlug, pageId } })
+  openWindow('wiki')
+}
+
+/**
+ * Opens a page when all we have is its id — a link in a note. The Wiki window works out which
+ * space it's in once it has loaded the page.
+ */
+export function openPageById(pageId: number) {
+  setUi({ wiki: { spaceSlug: null, pageId } })
+  openWindow('wiki')
+}
+
+export function openReader(ref: ItemRef | null, resourceId: number, page?: number) {
+  setUi({ reader: { ...(ref ?? {}), resourceId, page, n: ++readerCount } })
   openWindow('reader')
 }

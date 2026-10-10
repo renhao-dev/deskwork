@@ -4,6 +4,7 @@ import { all, get, run, tx } from './db.ts'
 import { dayKey } from '../shared/day.ts'
 import { settle, type TimerState } from '../shared/timer.ts'
 import { reorderSubset } from '../shared/order.ts'
+import { createGoalSpace } from './spaces.ts'
 import type {
   AttachedResource, BookmarkInput, Comment, ResourceUse, CompleteInput, CompleteResult, Completion, Dashboard, Goal,
   ItemDetail, ItemType, Resource, ResourceFolder, Task, TimerMode, User, WorkSession,
@@ -20,13 +21,13 @@ const dayOf = (u: User, ts: number) => dayKey(ts, u.settings.timezone, u.setting
 
 interface GoalRow {
   id: number; title: string; description: string; budget_minutes: number; points_target: number | null
-  points_done: number; archived_at: number | null; created_at: number; updated_at: number
+  points_done: number; space_id: number | null; archived_at: number | null; created_at: number; updated_at: number
   today_seconds: number; completed_today: number
 }
 
 const toGoal = (r: GoalRow): Goal => ({
   id: r.id, title: r.title, description: r.description, budgetMinutes: r.budget_minutes, pointsTarget: r.points_target,
-  pointsDone: r.points_done, archivedAt: r.archived_at, createdAt: r.created_at, updatedAt: r.updated_at,
+  pointsDone: r.points_done, spaceId: r.space_id, archivedAt: r.archived_at, createdAt: r.created_at, updatedAt: r.updated_at,
   todaySeconds: r.today_seconds, completedToday: !!r.completed_today,
 })
 
@@ -78,7 +79,10 @@ export function createGoal(u: User, input: GoalInput): Goal {
      VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM goals WHERE user_id = ?))`,
     u.id, g.title!, g.description ?? '', g.budgetMinutes!, g.pointsTarget ?? null, now, now, u.id,
   )
-  return getGoal(u, Number(r.lastInsertRowid))
+  const id = Number(r.lastInsertRowid)
+  // Every goal writes into a wiki space of its own, made here so nothing ever has to be filed.
+  createGoalSpace(u, id, g.title!)
+  return getGoal(u, id)
 }
 
 /** Puts the given tasks in this order; the ones left out keep their places. */
@@ -164,9 +168,10 @@ export function createTask(u: User, input: TaskInput): Task {
   const title = String(input.title ?? '').trim()
   if (!title) fail(400, 'Give the task a title')
   const now = Date.now()
+  // A new task goes to the top of the list.
   const r = run(
     `INSERT INTO tasks (user_id, title, description, scheduled_day, created_at, updated_at, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM tasks WHERE user_id = ?))`,
+     VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(sort_order), 1) - 1 FROM tasks WHERE user_id = ?))`,
     u.id, title, String(input.description ?? ''), cleanDay(input.scheduledDay), now, now, u.id,
   )
   return getTask(u, Number(r.lastInsertRowid))

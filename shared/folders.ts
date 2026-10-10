@@ -1,4 +1,5 @@
 // Resource folders form a tree through parentId. Shared so the tree logic can be unit tested.
+import { buildTree } from './tree.ts'
 import type { ResourceFolder } from './types.ts'
 
 export interface FolderTree {
@@ -14,33 +15,14 @@ export interface FolderTree {
 }
 
 export function buildFolderTree(folders: ResourceFolder[]): FolderTree {
-  const byId = new Map(folders.map((f) => [f.id, f]))
-  const kids = new Map<number | null, ResourceFolder[]>()
-  for (const f of folders) {
-    // A parent that no longer exists means top level.
-    const parent = f.parentId != null && byId.has(f.parentId) ? f.parentId : null
-    kids.set(parent, [...(kids.get(parent) ?? []), f])
-  }
-  for (const list of kids.values()) list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-  const children = (parent: number | null) => kids.get(parent) ?? []
-
-  const lineage = (id: number) => {
-    const out: number[] = []
-    for (let cur = byId.get(id); cur && out.length < 100; cur = cur.parentId != null ? byId.get(cur.parentId) : undefined) out.unshift(cur.id)
-    return out
-  }
-  const subtree = (id: number) => {
-    const out = new Set<number>([id])
-    const walk = (p: number) => children(p).forEach((c) => (out.add(c.id), walk(c.id)))
-    walk(id)
-    return out
-  }
-  const ordered: FolderTree['ordered'] = []
-  const walk = (p: number | null, depth: number) => children(p).forEach((f) => (ordered.push({ folder: f, depth }), walk(f.id, depth + 1)))
-  walk(null, 0)
-
+  // Folders read as a filing cabinet, so siblings are alphabetical rather than hand-ordered.
+  const tree = buildTree(folders, (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
   return {
-    byId, children, lineage, subtree, ordered,
-    path: (id) => lineage(id).map((i) => byId.get(i)!.name).join(' / '),
+    byId: tree.byId,
+    children: tree.children,
+    lineage: tree.lineage,
+    subtree: tree.subtree,
+    ordered: tree.ordered.map(({ node, depth }) => ({ folder: node, depth })),
+    path: (id) => tree.lineage(id).map((i) => tree.byId.get(i)!.name).join(' / '),
   }
 }
