@@ -1374,6 +1374,92 @@ button.session-toggle:hover { color: var(--ink); background: var(--paper-2); }
 .row[data-drop-pos='before']::after { top: -2px; }
 .row[data-drop-pos='after']::after { bottom: -2px; }
 
+/* ---------- task folders ---------- */
+
+/* Held over the middle of a row: the dragged task will join it (a folder), or pair up with it. */
+.row[data-drop-pos='inside'] {
+  background: var(--brass-soft);
+  box-shadow: inset 0 0 0 2px var(--brass);
+  border-radius: 6px;
+}
+.rows.reorderable .folder-head, .rows.reorderable .folder-rows > .row { cursor: grab; }
+.rows.reorderable .folder-head:active, .rows.reorderable .folder-rows > .row:active { cursor: grabbing; }
+.folder-twist { flex-shrink: 0; color: var(--muted); transition: rotate 0.12s ease; }
+.task-folder[data-open='true'] .folder-twist { rotate: 90deg; }
+.folder-mark { flex-shrink: 0; color: var(--brass-strong); }
+/* The folder's own buttons stay out of the way until the row is pointed at or reached by keyboard. */
+.folder-head .row-actions { opacity: 0; }
+.folder-head:hover .row-actions, .folder-head:focus-within .row-actions { opacity: 1; }
+.folder-rows {
+  margin-left: 21px;
+  border-top: 1px solid var(--edge);
+  border-left: 2px solid var(--edge);
+}
+.folder-name-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: var(--paper-input);
+  border: 1px solid var(--focus);
+  border-radius: 5px;
+  padding: 1px 6px;
+  margin: -2px 0;
+}
+.folder-name-input:focus { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 22%, transparent); }
+@media (hover: none) {
+  .folder-head .row-actions { opacity: 1; }
+}
+
+/* ---------- a plus on the line between two tasks ---------- */
+
+/* Takes no room: a strip laid over the line between two rows, seen only when pointed at. */
+.rows > li.task-gap { position: relative; height: 0; border: 0; }
+.rows > li.task-gap:first-child + li { border-top: 0; }
+.task-gap button {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  height: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 3px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.task-gap button::after { content: ''; flex: 1; height: 2px; border-radius: 1px; background: var(--brass); }
+.task-gap button:hover, .task-gap button:focus-visible { opacity: 1; transition-delay: 0.1s; }
+.task-gap-plus {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--brass);
+  color: var(--brass-ink);
+}
+/* At the very top there is no row above to lie over. */
+.task-gap:first-child button { top: -3px; }
+/* An open folder ends with two spots: after its last task (just above its bottom edge, and
+   indented like its tasks) and after the folder itself (just below). */
+.task-gap[data-end] button { top: -12px; align-items: flex-end; }
+.task-gap[data-end] .task-gap-plus { margin-bottom: -7px; }
+.task-folder[data-open='true'] + .task-gap button { top: 0; align-items: flex-start; }
+.task-folder[data-open='true'] + .task-gap .task-gap-plus { margin-top: -7px; }
+/* While a row is being dragged the lines are for dropping, not for adding. */
+.rows[data-drag-active] .task-gap { display: none; }
+.rows .task-draft, .rows .task-draft .row-main { cursor: default; }
+.task-draft .row-main { flex-direction: row; padding-right: 0; }
+@media (hover: none) {
+  .task-gap { display: none; }
+}
+
 /* Editing a logged session */
 .session-more { width: 26px; height: 26px; opacity: 0; }
 .session:hover .session-more, .session-more[data-state='open'], .session-more:focus-visible { opacity: 1; }

@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Menu from '@radix-ui/react-dropdown-menu'
 import { useQueryClient } from '@tanstack/react-query'
-import { AppWindow, Check, ChevronDown, CircleUser, FolderKanban, History, LayoutGrid, BookMarked, BookOpen, Library, ListChecks, LogOut, Monitor, Moon, Pause, Play, Settings, Square, Sun, Target, Users, WifiOff } from 'lucide-react'
+import { AppWindow, Check, ChevronDown, CircleUser, Download, FolderKanban, History, LayoutGrid, BookMarked, BookOpen, Library, ListChecks, LogOut, Monitor, Moon, Pause, Play, Settings, Square, Sun, Target, Users, WifiOff } from 'lucide-react'
 import { api, useServerOnline } from '../api.ts'
 import { keys, useAction, useMe, useTimerView } from '../hooks.ts'
 import { getUi, openDetails, openWindow, setUi } from '../ui-store.ts'
@@ -9,6 +9,7 @@ import { Button, IconButton, toast, toastError } from '../ui.tsx'
 import { formatClock, formatDuration } from '../../../shared/day.ts'
 import { applyTheme } from '../theme.ts'
 import { installApp, useCanInstall } from '../pwa.ts'
+import { installUpdate, useRelease } from '../updates.ts'
 import { MiniTimerButton } from './MiniTimer.tsx'
 import { notify } from '../notify.ts'
 import type { Theme, User } from '../../../shared/types.ts'
@@ -120,6 +121,27 @@ function TimerBar() {
   )
 }
 
+/** Shows up when a newer Deskwork is out and this copy can install it. Click = update. */
+function UpdateButton() {
+  const { data } = useRelease()
+  const [busy, setBusy] = useState(false)
+  if (!data?.latest || !data.canUpdate) return null
+  const update = () => {
+    setBusy(true)
+    // On success the page reloads into the new version, so only a failure comes back here.
+    installUpdate(data.version).catch((e) => {
+      setBusy(false)
+      toastError(e)
+    })
+  }
+  return (
+    <Button variant="brass" size="sm" className="update-btn" disabled={busy} onClick={update}
+      title={`Deskwork ${data.latest.version} is out (this is ${data.version}). Updating restarts Deskwork, so you sign in again afterwards.`}>
+      <Download size={15} /> {busy ? 'Updating…' : 'Update'}
+    </Button>
+  )
+}
+
 export function TopBar() {
   const { data: me } = useMe()
   // A window that goes full screen on a narrow display has to start below this bar, and the bar
@@ -184,6 +206,7 @@ export function TopBar() {
             <WifiOff size={15} /> Server offline, reconnecting…
           </span>
         )}
+        <UpdateButton />
         {canInstall && (
           <Button variant="brass" size="sm" className="install-btn" title="Gives Deskwork its own window, Dock icon and Cmd+Tab entry"
             onClick={() => installApp().catch(toastError)}>

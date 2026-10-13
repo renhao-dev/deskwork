@@ -1,5 +1,4 @@
-// Which Deskwork this is, and whether a newer one has been released. Installs through Homebrew
-// update with `brew upgrade`, so all the app can do is say that one exists.
+// Which Deskwork this is, and whether a newer one has been released. Getting it is updater.ts.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -21,12 +20,15 @@ export function isNewer(a: string, b: string) {
 
 export interface Latest { version: string; url: string }
 let cached: { at: number; latest: Latest | null } | null = null
-const TWELVE_HOURS = 12 * 3_600_000
+const FIVE_MINUTES = 5 * 60_000
 
-/** The newest release on GitHub, asked at most twice a day. Offline or rate-limited just means "don't know". */
+/**
+ * The newest release on GitHub, asked at most every five minutes (GitHub allows 60 questions an
+ * hour without an account). Offline or rate-limited just means "don't know".
+ */
 export async function latestRelease(): Promise<Latest | null> {
   if (!REPO) return null
-  if (cached && Date.now() - cached.at < TWELVE_HOURS) return cached.latest
+  if (cached && Date.now() - cached.at < FIVE_MINUTES) return cached.latest
   let latest: Latest | null = null
   try {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {

@@ -9,12 +9,12 @@ brew install renhao-dev/deskwork/deskwork
 brew services start deskwork
 ```
 
-Starting it puts **Deskwork in Launchpad**. Open it there (or go to http://localhost:5174 in Chrome), make your account, and click **Install app** in the top bar for its own window and Dock icon. From then on Chrome's Deskwork app is the Launchpad icon, and the first one removes itself.
+Starting it puts **Deskwork(chrome tab)** in Launchpad. Open it there (or go to http://localhost:5174 in Chrome), make your account, and click **Install app** in the top bar for its own window and Dock icon. From then on Chrome's Deskwork app is the Launchpad icon, and the first one removes itself.
 
 - Your data is in `~/Library/Application Support/Deskwork/data`, encrypted with your password. There is no way to reset the password.
-- Update: `brew upgrade deskwork`. Deskwork mentions it when a new version is out.
+- Update: when a new version is out, an **Update** button shows up in the top bar (Deskwork looks every 5 minutes). Clicking it installs the new version and restarts Deskwork, so you sign in again. By hand: `brew update`, then `brew upgrade deskwork` and `brew services restart deskwork`.
 - Stop or start the server: `brew services stop deskwork` / `brew services start deskwork`. Log: `$(brew --prefix)/var/log/deskwork.log`.
-- Remove: `brew services stop deskwork && brew uninstall deskwork`, then drag `~/Applications/Deskwork.app` to the Trash. The data folder stays until you delete it.
+- Remove: `brew services stop deskwork && brew uninstall deskwork`, then drag `Deskwork(chrome tab)` from `~/Applications` to the Trash. The data folder stays until you delete it.
 - If you also used `scripts/install-mac.sh`, run `scripts/install-mac.sh --uninstall` first: both serve on port 5174. They share the same data folder.
 
 ## Release

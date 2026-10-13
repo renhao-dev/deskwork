@@ -208,6 +208,27 @@ export const vaultMigrations: (string | ((conn: Conn) => void))[] = [
       conn.exec('ALTER TABLE vault.spaces ADD COLUMN home_id INTEGER REFERENCES notes(id) ON DELETE SET NULL')
     }
   },
+  // Tasks can be grouped into folders. A folder takes one place in the list, among the tasks that
+  // are in no folder; its own tasks are ordered among themselves. A task stays a full task either
+  // way: the folder is only a field on it, so listing every task without folders needs nothing new.
+  //
+  // Like the step above, this looks before it adds: running it twice must not lock anyone out.
+  (conn: Conn) => {
+    conn.exec(`
+      CREATE TABLE IF NOT EXISTS vault.task_folders (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        collapsed INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER,
+        created_at INTEGER NOT NULL
+      )`)
+    const columns = conn.prepare(`SELECT name FROM pragma_table_info('tasks', 'vault')`).all() as { name: string }[]
+    if (!columns.some((c) => c.name === 'folder_id')) {
+      conn.exec('ALTER TABLE vault.tasks ADD COLUMN folder_id INTEGER REFERENCES task_folders(id) ON DELETE SET NULL')
+    }
+    conn.exec('CREATE INDEX IF NOT EXISTS vault.tasks_folder ON tasks(folder_id)')
+  },
 ]
 
 /** The tables that move out of the shared database and into each vault. */

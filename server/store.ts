@@ -7,7 +7,7 @@ import { reorderSubset } from '../shared/order.ts'
 import { createGoalSpace } from './spaces.ts'
 import type {
   AttachedResource, BookmarkInput, Comment, ResourceUse, CompleteInput, CompleteResult, Completion, Dashboard, Goal,
-  ItemDetail, ItemType, Resource, ResourceFolder, Task, TimerMode, User, WorkSession,
+  ItemDetail, ItemType, Resource, ResourceFolder, Task, TaskFolder, TaskLayoutEntry, TimerMode, User, WorkSession,
 } from '../shared/types.ts'
 
 export const fail = (status: 400 | 403 | 404 | 409, message: string): never => {
@@ -85,27 +85,18 @@ export function createGoal(u: User, input: GoalInput): Goal {
   return getGoal(u, id)
 }
 
-/** Puts the given tasks in this order; the ones left out keep their places. */
-export function reorderTasks(u: User, ids: number[]) {
-  reorderItems(u, 'tasks', ids)
-}
-
 /**
  * Puts the given goals in this order. They're usually just the ones on today's list, so the goals
  * not shown (done today, archived) keep their places and the given ones fill the slots between them.
  */
 export function reorderGoals(u: User, ids: number[]) {
-  reorderItems(u, 'goals', ids)
-}
-
-function reorderItems(u: User, table: 'goals' | 'tasks', ids: number[]) {
-  const all_ = all<{ id: number }>(`SELECT id FROM ${table} WHERE user_id = ? ORDER BY sort_order, created_at`, u.id).map((r) => r.id)
+  const all_ = all<{ id: number }>('SELECT id FROM goals WHERE user_id = ? ORDER BY sort_order, created_at', u.id).map((r) => r.id)
   const given = ids.map(Number)
   if (new Set(given).size !== given.length || given.some((id) => !all_.includes(id))) {
-    fail(400, `That list of ${table} is out of date. Reload and try again.`)
+    fail(400, 'That list of goals is out of date. Reload and try again.')
   }
   const order = reorderSubset(all_, given)
-  tx(() => order.forEach((id, i) => run(`UPDATE ${table} SET sort_order = ? WHERE id = ?`, i + 1, id)))
+  tx(() => order.forEach((id, i) => run('UPDATE goals SET sort_order = ? WHERE id = ?', i + 1, id)))
 }
 
 export function updateGoal(u: User, id: number, input: GoalInput & { pointsDone?: number; archived?: boolean }): Goal {
@@ -135,21 +126,30 @@ export function updateGoal(u: User, id: number, input: GoalInput & { pointsDone?
 
 interface TaskRow {
   id: number; title: string; description: string; scheduled_day: string | null; completed_at: number | null
-  created_at: number; updated_at: number; total_seconds: number
+  created_at: number; updated_at: number; total_seconds: number; folder_id: number | null
 }
 
 const toTask = (r: TaskRow): Task => ({
   id: r.id, title: r.title, description: r.description, scheduledDay: r.scheduled_day, completedAt: r.completed_at,
-  createdAt: r.created_at, updatedAt: r.updated_at, totalSeconds: r.total_seconds,
+  createdAt: r.created_at, updatedAt: r.updated_at, totalSeconds: r.total_seconds, folderId: r.folder_id,
 })
 
 const TASK_SELECT = `
   SELECT t.*,
     COALESCE((SELECT SUM(seconds) FROM work_sessions w WHERE w.item_type = 'task' AND w.item_id = t.id), 0) AS total_seconds
-  FROM tasks t`
+  FROM tasks t LEFT JOIN task_folders f ON f.id = t.folder_id`
 
+/**
+ * Every task, as one flat list. A task in a folder takes the folder's place, so the tasks of one
+ * folder come together, in their own order.
+ */
 export function listTasks(u: User): Task[] {
-  return all<TaskRow>(`${TASK_SELECT} WHERE t.user_id = ? ORDER BY t.completed_at IS NOT NULL, t.completed_at DESC, t.sort_order, t.created_at`, u.id).map(toTask)
+  return all<TaskRow>(
+    `${TASK_SELECT} WHERE t.user_id = ?
+     ORDER BY t.completed_at IS NOT NULL, t.completed_at DESC,
+       COALESCE(f.sort_order, t.sort_order), COALESCE(t.folder_id, 0), t.sort_order, t.created_at`,
+    u.id,
+  ).map(toTask)
 }
 
 export function getTask(u: User, id: number): Task {
@@ -157,7 +157,11 @@ export function getTask(u: User, id: number): Task {
   return row ? toTask(row) : fail(404, 'This task no longer exists')
 }
 
-export interface TaskInput { title?: string; description?: string; scheduledDay?: string | null; reopen?: boolean }
+export interface TaskInput {
+  title?: string; description?: string; scheduledDay?: string | null; reopen?: boolean
+  /** For a new task made at a chosen spot: the list as it should look, with 0 standing for the new task. */
+  layout?: unknown
+}
 
 function cleanDay(v: string | null | undefined) {
   if (v == null || v === '') return null
@@ -168,13 +172,26 @@ export function createTask(u: User, input: TaskInput): Task {
   const title = String(input.title ?? '').trim()
   if (!title) fail(400, 'Give the task a title')
   const now = Date.now()
-  // A new task goes to the top of the list.
-  const r = run(
-    `INSERT INTO tasks (user_id, title, description, scheduled_day, created_at, updated_at, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(sort_order), 1) - 1 FROM tasks WHERE user_id = ?))`,
-    u.id, title, String(input.description ?? ''), cleanDay(input.scheduledDay), now, now, u.id,
-  )
-  return getTask(u, Number(r.lastInsertRowid))
+  return tx(() => {
+    // A new task goes to the top of the list, above the folders too.
+    const r = run(
+      `INSERT INTO tasks (user_id, title, description, scheduled_day, created_at, updated_at, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(s), 1) - 1 FROM (
+         SELECT sort_order AS s FROM tasks WHERE user_id = ? AND folder_id IS NULL
+         UNION ALL SELECT sort_order FROM task_folders WHERE user_id = ?)))`,
+      u.id, title, String(input.description ?? ''), cleanDay(input.scheduledDay), now, now, u.id, u.id,
+    )
+    const id = Number(r.lastInsertRowid)
+    // Unless it was made at a spot in the list: between two tasks, or inside a folder.
+    if (input.layout !== undefined) {
+      const named = (v: unknown) => (Number(v) === 0 ? id : v)
+      const rows = (Array.isArray(input.layout) ? input.layout : fail(400, STALE_TASKS)) as { task?: unknown; folder?: unknown; tasks?: unknown }[]
+      arrangeTasks(u, rows.map((e) => (e && e.folder !== undefined
+        ? { folder: e.folder, tasks: (Array.isArray(e.tasks) ? e.tasks : []).map(named) }
+        : { task: named(e?.task) })))
+    }
+    return getTask(u, id)
+  })
 }
 
 export function updateTask(u: User, id: number, input: TaskInput): Task {
@@ -194,6 +211,127 @@ export function updateTask(u: User, id: number, input: TaskInput): Task {
   return getTask(u, id)
 }
 
+// ---------- task folders ----------
+//
+// The task list has two levels. The top level holds folders and the tasks that are in no folder,
+// ordered together by sort_order. Inside a folder, its tasks are ordered by their own sort_order.
+
+interface TaskFolderRow { id: number; title: string; collapsed: number }
+
+const toTaskFolder = (r: TaskFolderRow): TaskFolder => ({ id: r.id, title: r.title, collapsed: !!r.collapsed })
+
+export function listTaskFolders(u: User): TaskFolder[] {
+  return all<TaskFolderRow>('SELECT id, title, collapsed FROM task_folders WHERE user_id = ? ORDER BY sort_order, id', u.id).map(toTaskFolder)
+}
+
+function getTaskFolder(u: User, id: number): TaskFolder {
+  const row = get<TaskFolderRow>('SELECT id, title, collapsed FROM task_folders WHERE user_id = ? AND id = ?', u.id, id)
+  return row ? toTaskFolder(row) : fail(404, 'This folder no longer exists')
+}
+
+/** The top level in order, as keys: "t5" is task 5, "f2" is folder 2. */
+function topLevelKeys(u: User): string[] {
+  return all<{ k: string }>(
+    `SELECT 't' || id AS k, sort_order AS s FROM tasks WHERE user_id = ? AND folder_id IS NULL
+     UNION ALL SELECT 'f' || id, sort_order FROM task_folders WHERE user_id = ?
+     ORDER BY s, k`,
+    u.id, u.id,
+  ).map((r) => r.k)
+}
+
+function saveTopLevel(keys: string[]) {
+  keys.forEach((k, i) => run(`UPDATE ${k[0] === 'f' ? 'task_folders' : 'tasks'} SET sort_order = ? WHERE id = ?`, i + 1, Number(k.slice(1))))
+}
+
+const folderTaskIds = (folderId: number) =>
+  all<{ id: number }>('SELECT id FROM tasks WHERE folder_id = ? ORDER BY sort_order, id', folderId).map((r) => r.id)
+
+/** A folder is only its tasks: when the last one leaves or is deleted, the folder goes too. */
+function removeEmptyTaskFolders(u: User) {
+  run('DELETE FROM task_folders WHERE user_id = ? AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.folder_id = task_folders.id)', u.id)
+}
+
+const STALE_TASKS = 'That list of tasks is out of date. Reload and try again.'
+
+/** Whole, distinct ids of this user's rows in a table, or a refusal. */
+function ownIds(u: User, table: 'tasks' | 'task_folders', ids: unknown[]): number[] {
+  const given = ids.map(Number)
+  const own = new Set(all<{ id: number }>(`SELECT id FROM ${table} WHERE user_id = ?`, u.id).map((r) => r.id))
+  if (new Set(given).size !== given.length || given.some((id) => !own.has(id))) fail(400, STALE_TASKS)
+  return given
+}
+
+function cleanFolderTitle(v: unknown) {
+  const t = String(v ?? '').trim()
+  return t ? t.slice(0, 200) : fail(400, 'Give the folder a name')
+}
+
+/**
+ * Groups tasks into a new folder, which takes the place of the first one (the task the others
+ * were dropped on). It starts closed: the tasks now show as one row.
+ */
+export function createTaskFolder(u: User, input: { taskIds?: unknown; title?: unknown }): TaskFolder {
+  const ids = ownIds(u, 'tasks', Array.isArray(input.taskIds) ? input.taskIds : [])
+  if (ids.length < 2) fail(400, 'A folder starts with two tasks')
+  const title = input.title === undefined ? 'New folder' : cleanFolderTitle(input.title)
+  return tx(() => {
+    const first = get<{ sort_order: number | null; folder_id: number | null }>('SELECT sort_order, folder_id FROM tasks WHERE id = ?', ids[0])!
+    if (first.folder_id !== null) fail(400, 'That task is already in a folder')
+    const r = run('INSERT INTO task_folders (user_id, title, collapsed, sort_order, created_at) VALUES (?, ?, 1, ?, ?)', u.id, title, first.sort_order, Date.now())
+    const folderId = Number(r.lastInsertRowid)
+    ids.forEach((id, i) => run('UPDATE tasks SET folder_id = ?, sort_order = ? WHERE id = ?', folderId, i + 1, id))
+    removeEmptyTaskFolders(u) // a task may have been the last one in the folder it came from
+    return getTaskFolder(u, folderId)
+  })
+}
+
+export function updateTaskFolder(u: User, id: number, input: { title?: unknown; collapsed?: unknown }): TaskFolder {
+  getTaskFolder(u, id)
+  if (input.title !== undefined) run('UPDATE task_folders SET title = ? WHERE id = ?', cleanFolderTitle(input.title), id)
+  if (input.collapsed !== undefined) run('UPDATE task_folders SET collapsed = ? WHERE id = ?', input.collapsed ? 1 : 0, id)
+  return getTaskFolder(u, id)
+}
+
+/** Takes a folder apart: its tasks stay, in the same place and order, as tasks of their own. */
+export function ungroupTaskFolder(u: User, id: number) {
+  getTaskFolder(u, id)
+  tx(() => {
+    const top = topLevelKeys(u)
+    const members = folderTaskIds(id).map((t) => `t${t}`)
+    run('UPDATE tasks SET folder_id = NULL WHERE folder_id = ?', id)
+    run('DELETE FROM task_folders WHERE id = ?', id)
+    saveTopLevel(top.flatMap((k) => (k === `f${id}` ? members : [k])))
+  })
+}
+
+/**
+ * Saves the task list as it was arranged on screen: which tasks stand alone, which sit in which
+ * folder, and in what order. Only the rows on screen are given, so everything not mentioned (done
+ * tasks, tasks for a later day) keeps its folder and its place, and the given rows fill the slots
+ * between them.
+ */
+export function arrangeTasks(u: User, entries: unknown) {
+  const rows = (Array.isArray(entries) ? entries : fail(400, STALE_TASKS)) as { task?: unknown; folder?: unknown; tasks?: unknown }[]
+  const layout = rows.map((e): TaskLayoutEntry =>
+    e && e.folder !== undefined
+      ? { folder: Number(e.folder), tasks: (Array.isArray(e.tasks) ? e.tasks : []).map(Number) }
+      : { task: Number(e?.task) })
+  ownIds(u, 'tasks', layout.flatMap((e) => ('folder' in e ? e.tasks : [e.task])))
+  ownIds(u, 'task_folders', layout.flatMap((e) => ('folder' in e ? [e.folder] : [])))
+  tx(() => {
+    for (const e of layout) {
+      if ('folder' in e) for (const t of e.tasks) run('UPDATE tasks SET folder_id = ? WHERE id = ?', e.folder, t)
+      else run('UPDATE tasks SET folder_id = NULL WHERE id = ?', e.task)
+    }
+    for (const e of layout) {
+      if (!('folder' in e)) continue
+      reorderSubset(folderTaskIds(e.folder), e.tasks).forEach((t, i) => run('UPDATE tasks SET sort_order = ? WHERE id = ?', i + 1, t))
+    }
+    saveTopLevel(reorderSubset(topLevelKeys(u), layout.map((e) => ('folder' in e ? `f${e.folder}` : `t${e.task}`))))
+    removeEmptyTaskFolders(u)
+  })
+}
+
 // ---------- shared item helpers ----------
 
 export function assertItem(u: User, type: ItemType, id: number) {
@@ -209,6 +347,7 @@ export function deleteItem(u: User, type: ItemType, id: number) {
     run(`DELETE FROM ${type === 'goal' ? 'goals' : 'tasks'} WHERE id = ? AND user_id = ?`, id, u.id)
     run('DELETE FROM comments WHERE item_type = ? AND item_id = ? AND user_id = ?', type, id, u.id)
     run('DELETE FROM item_resources WHERE item_type = ? AND item_id = ?', type, id)
+    if (type === 'task') removeEmptyTaskFolders(u)
   })
 }
 
@@ -771,7 +910,10 @@ export function dashboard(u: User): Dashboard {
   const tasks = listTasks(u).filter((t) => !t.completedAt && (!t.scheduledDay || t.scheduledDay <= d))
   const completions = all<CompletionRow>('SELECT * FROM completions WHERE user_id = ? AND day = ? ORDER BY completed_at DESC', u.id, d).map(toCompletion)
   const todaySeconds = get<{ s: number }>('SELECT COALESCE(SUM(seconds), 0) AS s FROM work_sessions WHERE user_id = ? AND day = ?', u.id, d)!.s
-  return { today: d, goals, tasks, completions, todaySeconds, timer: currentTimer(u) }
+  // Only the folders with something to show today; the others wait with their tasks.
+  const shown = new Set(tasks.map((t) => t.folderId))
+  const taskFolders = listTaskFolders(u).filter((f) => shown.has(f.id))
+  return { today: d, goals, tasks, taskFolders, completions, todaySeconds, timer: currentTimer(u) }
 }
 
 interface WorkRow {

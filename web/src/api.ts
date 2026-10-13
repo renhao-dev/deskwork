@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import type {
   AttachedResource, Backlink, BookmarkInput, Comment, CompleteInput, CompleteResult, Completion, Dashboard, Goal, ItemDetail, LinkTarget,
-  ItemType, Note, NoteSummary, Resource, ResourceFolder, SearchHit, Space, SpaceInput, Task, TimerMode, User, UserSettings, WorkSession,
+  ItemType, Note, NoteSummary, Resource, ResourceFolder, SearchHit, Space, SpaceInput, Task, TaskFolder, TaskLayoutEntry, TimerMode, User,
+  UpdateStatus, UserSettings, WorkSession,
 } from '../../shared/types.ts'
 import type { TimerState } from '../../shared/timer.ts'
 
@@ -90,6 +91,13 @@ export const api = {
   setup: (username: string, password: string) =>
     request<User>('POST', '/auth/setup', { username, password, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
   logout: () => request('POST', '/auth/logout'),
+  /** Removes the "Deskwork(chrome tab)" Launchpad launcher, now that Chrome's own app replaces it. */
+  retireLauncher: () => request<{ removed: boolean }>('POST', '/launcher/retire'),
+  /** `latest` is set when a newer Deskwork is out; `canUpdate` when this copy can install it by itself. */
+  version: () => request<{ version: string; latest: { version: string; url: string } | null; canUpdate: boolean }>('GET', '/version'),
+  /** Installs the newer Deskwork. The server restarts when it is done; follow along with updateStatus. */
+  startUpdate: () => request<UpdateStatus>('POST', '/update'),
+  updateStatus: () => request<UpdateStatus>('GET', '/update'),
   saveSettings: (patch: Partial<UserSettings>) => request<User>('PUT', '/me/settings', patch),
   /** Forget where the windows were, so they come back to their usual places. */
   tidyWindows: () => request<User>('PUT', '/me/settings', { layout: null }),
@@ -112,9 +120,16 @@ export const api = {
   tasks: () => request<Task[]>('GET', '/tasks'),
   createGoal: (g: Partial<Goal>) => request<Goal>('POST', '/goals', g),
   reorderGoals: (ids: number[]) => request('PUT', '/goals/order', { ids }),
-  reorderTasks: (ids: number[]) => request('PUT', '/tasks/order', { ids }),
+  /** Saves the task list as arranged on screen: the order, and which tasks sit in which folder. */
+  arrangeTasks: (entries: TaskLayoutEntry[]) => request('PUT', '/tasks/layout', { entries }),
+  /** Groups tasks into a new folder that takes the place of the first one. */
+  createTaskFolder: (taskIds: number[]) => request<TaskFolder>('POST', '/task-folders', { taskIds }),
+  updateTaskFolder: (id: number, f: Partial<Pick<TaskFolder, 'title' | 'collapsed'>>) => request<TaskFolder>('PUT', `/task-folders/${id}`, f),
+  /** Removes the folder and leaves its tasks in the list. */
+  ungroupTaskFolder: (id: number) => request('DELETE', `/task-folders/${id}`),
   updateGoal: (id: number, g: Partial<Goal> & { archived?: boolean }) => request<Goal>('PUT', `/goals/${id}`, g),
-  createTask: (t: Partial<Task>) => request<Task>('POST', '/tasks', t),
+  /** `layout` puts it at a spot in the list instead of on top: the list as it should look, with 0 for the new task. */
+  createTask: (t: Partial<Task> & { layout?: TaskLayoutEntry[] }) => request<Task>('POST', '/tasks', t),
   updateTask: (id: number, t: Partial<Task> & { reopen?: boolean }) => request<Task>('PUT', `/tasks/${id}`, t),
   detail: (type: ItemType, id: number) => request<ItemDetail<Goal | Task>>('GET', itemPath(type, id)),
   deleteItem: (type: ItemType, id: number) => request('DELETE', itemPath(type, id)),

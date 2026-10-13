@@ -1,4 +1,6 @@
-// Noticing that Deskwork has been updated while this window stayed open.
+// Noticing that Deskwork has been updated while this window stayed open, and getting a newer one.
+import { useQuery } from '@tanstack/react-query'
+import { api, ApiError } from './api.ts'
 import { toast } from './ui.tsx'
 
 let loadedBuild: string | null = null
@@ -26,20 +28,35 @@ export function watchForUpdates() {
 
 // ---------- a newer release ----------
 
-const SEEN_KEY = 'deskwork.release-notice'
+const FIVE_MINUTES = 5 * 60_000
 
-/** Says once a day that a newer Deskwork has been released, and how to get it. Needs a signed-in user. */
-export async function announceNewRelease() {
-  const latest = await fetch('/api/version', { cache: 'no-store' })
-    .then((r) => r.json() as Promise<{ latest?: { version: string; url: string } | null }>)
-    .then((v) => v.latest ?? null, () => null)
-  if (!latest) return
-  const today = new Date().toDateString()
-  try {
-    if (localStorage.getItem(SEEN_KEY) === `${latest.version} ${today}`) return
-    localStorage.setItem(SEEN_KEY, `${latest.version} ${today}`)
-  } catch {}
-  const { url } = latest
-  toast(`Deskwork ${latest.version} is out. Update in Terminal: brew upgrade deskwork`, 'info',
-    { label: 'What’s new', run: () => window.open(url, '_blank', 'noopener') })
+/** Asks now and every five minutes whether a newer Deskwork is out, and whether this copy can install it. */
+export const useRelease = () =>
+  useQuery({ queryKey: ['version'], queryFn: api.version, refetchInterval: FIVE_MINUTES, refetchIntervalInBackground: true, retry: false })
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Installs the newer Deskwork and loads it: the server has Homebrew fetch it, then restarts.
+ * `from` is the version running now. On success the page reloads; a failure is thrown with its reason.
+ */
+export async function installUpdate(from: string) {
+  const started = await api.startUpdate()
+  if (started.state === 'failed') throw new Error(started.error ?? 'The update did not work.')
+  const giveUpAt = Date.now() + 25 * 60_000
+  while (Date.now() < giveUpAt) {
+    await sleep(2000)
+    // The server is away for a moment while it restarts. A new version answering means it's done.
+    const health = await fetch('/api/health', { cache: 'no-store' })
+      .then((r) => (r.ok ? (r.json() as Promise<{ version?: string }>) : null), () => null)
+    if (!health) continue
+    const status = await api.updateStatus().catch((e) => (e instanceof ApiError && e.status === 401 ? 'signed out' as const : null))
+    // A restart signs everyone out, so that too means the server came back: show what it is now.
+    if ((health.version && health.version !== from) || status === 'signed out') {
+      location.reload()
+      return
+    }
+    if (status?.state === 'failed') throw new Error(status.error ?? 'The update did not work.')
+  }
+  throw new Error('The update is taking too long. Look at it in Terminal: brew upgrade deskwork')
 }

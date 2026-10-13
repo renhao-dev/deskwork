@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import * as Tabs from '@radix-ui/react-tabs'
 import { Plus, Target, ListChecks, CircleCheckBig, History, Library, ArrowDownUp, Undo2 } from 'lucide-react'
@@ -7,7 +7,13 @@ import { keys, useAction, useDashboard, useGoals, useResources, useTasks, useTim
 import { openDetails, setUi, type WindowId } from '../ui-store.ts'
 import { Button, Confirm, Empty, IconButton, toast, toastError } from '../ui.tsx'
 import { GoalRow, TaskRow } from '../items/ItemRows.tsx'
+import { TaskFolderRow } from '../items/TaskFolderRow.tsx'
 import { useReorder } from '../items/useReorder.ts'
+import { useTaskBoard } from '../items/useTaskBoard.ts'
+import { TaskGap } from '../items/TaskGap.tsx'
+import {
+  buildEntries, flatten, placeNew, refOf, sameRef, sectionOfEntry, toLayout, type Entry, type LaidTask, type Ref, type Section,
+} from '../items/taskLayout.ts'
 import { undoCompletion } from '../items/undoCompletion.ts'
 import { openResource } from '../resources/resources.tsx'
 import { DayGroup } from '../items/Sessions.tsx'
@@ -15,7 +21,7 @@ import { ResourceBrowser, ResourceRowTitle, resourceMeta, type FolderFilter } fr
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { SpacesWindow } from '../wiki/SpacesWindow.tsx'
 import { formatDuration } from '../../../shared/day.ts'
-import type { Completion, Dashboard, ItemType, Task } from '../../../shared/types.ts'
+import type { Completion, Dashboard, ItemType, Task, TaskFolder } from '../../../shared/types.ts'
 
 type DeskRef = React.RefObject<HTMLDivElement | null>
 
@@ -66,24 +72,35 @@ export function GoalsWindow({ deskRef }: { deskRef: DeskRef }) {
   )
 }
 
+// Rows whose day has passed come first, then today's; the rest keep the order you put them in.
+const TASK_SECTIONS: { id: Section; title: string; label: string }[] = [
+  { id: 'due', title: 'Due', label: 'Tasks past their day' },
+  { id: 'today', title: 'Today', label: 'Tasks for today' },
+  { id: 'rest', title: 'Other tasks', label: 'Other tasks' },
+]
+
+/** A place for a new task: just before or just after a row. */
+type Spot = { target: Ref; pos: 'before' | 'after' }
+
 export function TasksWindow({ deskRef }: { deskRef: DeskRef }) {
   const { data } = useDashboard()
   const qc = useQueryClient()
+  // The folder whose name is being typed: a new folder starts this way.
+  const [renaming, setRenaming] = useState<number | null>(null)
+  // The line between two rows where a new task's title is being typed.
+  const [adding, setAdding] = useState<Spot | null>(null)
   const tasks = data?.tasks ?? []
-  // Tasks whose day has passed come first, then today's; the rest keep the order you put them in.
   const day = data?.today ?? ''
-  const due = tasks.filter((t) => t.scheduledDay !== null && t.scheduledDay < day)
-  const today = tasks.filter((t) => t.scheduledDay === day)
-  const rest = tasks.filter((t) => t.scheduledDay === null || t.scheduledDay > day)
+  // A row is a task on its own, or a folder standing for several.
+  const entries = buildEntries(tasks)
+  const folders = new Map((data?.taskFolders ?? []).map((f) => [f.id, f]))
+  const timerTask = data?.timer?.itemType === 'task' ? data.timer.itemId : null
 
-  const save = (ordered: Task[]) => {
+  // Show a change at once, then save it (and put things back if saving fails).
+  const change = (apply: (d: Dashboard) => Dashboard, save: () => Promise<unknown>) => {
     const before = qc.getQueryData<Dashboard>(keys.dashboard)
-    const ids = ordered.map((t) => t.id)
-    qc.setQueryData<Dashboard>(keys.dashboard, (d) => d && {
-      ...d,
-      tasks: [...d.tasks].sort((a, b) => (ids.indexOf(a.id) + 1 || 99) - (ids.indexOf(b.id) + 1 || 99)),
-    })
-    api.reorderTasks(ids).then(
+    qc.setQueryData<Dashboard>(keys.dashboard, (d) => d && apply(d))
+    save().then(
       () => qc.invalidateQueries({ queryKey: keys.tasks }),
       (e) => {
         if (before) qc.setQueryData(keys.dashboard, before)
@@ -91,9 +108,70 @@ export function TasksWindow({ deskRef }: { deskRef: DeskRef }) {
       },
     )
   }
-  const dueRows = useReorder(due, save)
-  const todayRows = useReorder(today, save)
-  const restRows = useReorder(rest, save)
+  const reload = async () => {
+    qc.invalidateQueries({ queryKey: keys.tasks })
+    await qc.invalidateQueries({ queryKey: keys.dashboard })
+  }
+  const board = useTaskBoard(entries, day, {
+    arrange: (next) => change((d) => ({ ...d, tasks: flatten(next) }), () => api.arrangeTasks(toLayout(next))),
+    // The folder comes from the server, so this one waits for it, then asks for its name.
+    group: (targetId, draggedId) => {
+      api.createTaskFolder([targetId, draggedId]).then(async (f) => {
+        await reload()
+        setRenaming(f.id)
+      }, toastError)
+    },
+  })
+  const patchFolder = (id: number, patch: Partial<Pick<TaskFolder, 'title' | 'collapsed'>>) =>
+    change((d) => ({ ...d, taskFolders: d.taskFolders.map((f) => (f.id === id ? { ...f, ...patch } : f)) }), () => api.updateTaskFolder(id, patch))
+  const ungroup = (f: TaskFolder) => {
+    api.ungroupTaskFolder(f.id).then(async () => {
+      await reload()
+      toast(`Removed the folder “${f.title}”. Its tasks are still in the list.`)
+    }, toastError)
+  }
+
+  // A new task made on the line between two rows: beside a task in a folder it joins that folder.
+  const addAt = (spot: Spot, title: string | null) => {
+    if (!title) return setAdding(null)
+    const top = entries.find((e) => sameRef(refOf(e), spot.target))
+    // Between today's rows it is a task for today, or it would show up in another section.
+    const scheduledDay = top && sectionOfEntry(top, day) === 'today' ? day : null
+    const next = placeNew<LaidTask>(entries, { id: 0, folderId: null, scheduledDay }, spot.target, spot.pos)
+    api.createTask({ title, scheduledDay, layout: next ? toLayout(next) : undefined })
+      .then(reload, toastError)
+      .finally(() => setAdding(null))
+  }
+  const gap = (target: Ref, pos: Spot['pos'], inFolderEnd = false) => (
+    <TaskGap key={`gap-${pos}-${target.kind}${target.id}`} inFolderEnd={inFolderEnd}
+      open={!!adding && adding.pos === pos && sameRef(adding.target, target)}
+      onOpen={() => setAdding({ target, pos })} onDone={(title) => addAt({ target, pos }, title)} />
+  )
+
+  const row = (e: Entry<Task>) => {
+    if (e.kind === 'task') return <TaskRow key={`t${e.task.id}`} task={e.task} liProps={board.rowProps({ kind: 'task', id: e.task.id })} />
+    const f = folders.get(e.folderId) ?? { id: e.folderId, title: 'Folder', collapsed: false }
+    return (
+      <TaskFolderRow key={`f${f.id}`} folder={f} tasks={e.tasks} day={day}
+        active={e.tasks.some((t) => t.id === timerTask)}
+        renaming={renaming === f.id}
+        onStartRename={() => setRenaming(f.id)}
+        onRename={(title) => {
+          setRenaming(null)
+          if (title && title !== f.title) patchFolder(f.id, { title })
+        }}
+        onToggle={() => patchFolder(f.id, { collapsed: !f.collapsed })}
+        onUngroup={() => ungroup(f)}
+        headProps={board.rowProps({ kind: 'folder', id: f.id }, { open: !f.collapsed, draggable: renaming !== f.id })}>
+        {e.tasks.flatMap((t, i) => [
+          gap({ kind: 'task', id: t.id }, 'before'),
+          <TaskRow key={t.id} task={t} liProps={board.rowProps({ kind: 'task', id: t.id })} />,
+          i === e.tasks.length - 1 && gap({ kind: 'task', id: t.id }, 'after', true),
+        ])}
+      </TaskFolderRow>
+    )
+  }
+  const sections = TASK_SECTIONS.map((s) => ({ ...s, rows: entries.filter((e) => sectionOfEntry(e, day) === s.id) })).filter((s) => s.rows.length > 0)
 
   return (
     <FloatingWindow id="tasks" title="Tasks" icon={<ListChecks size={17} />} meta={data ? tasks.length : undefined}
@@ -104,32 +182,21 @@ export function TasksWindow({ deskRef }: { deskRef: DeskRef }) {
           No tasks waiting. Add a one-off, like a call or an errand.
         </Empty>
       ) : (
-        <>
-          {due.length > 0 && (
-            <>
-              <h3 className="list-section">Due</h3>
-              <ul className="rows reorderable" aria-label="Tasks past their day. Drag to reorder, or Alt+arrow keys.">
-                {due.map((t) => <TaskRow key={t.id} task={t} liProps={dueRows.rowProps(t)} />)}
-              </ul>
-            </>
-          )}
-          {today.length > 0 && (
-            <>
-              <h3 className="list-section">Today</h3>
-              <ul className="rows reorderable" aria-label="Tasks for today. Drag to reorder, or Alt+arrow keys.">
-                {today.map((t) => <TaskRow key={t.id} task={t} liProps={todayRows.rowProps(t)} />)}
-              </ul>
-            </>
-          )}
-          {rest.length > 0 && (
-            <>
-              {due.length + today.length > 0 && <h3 className="list-section">Other tasks</h3>}
-              <ul className="rows reorderable" aria-label="Other tasks. Drag to reorder, or Alt+arrow keys.">
-                {rest.map((t) => <TaskRow key={t.id} task={t} liProps={restRows.rowProps(t)} />)}
-              </ul>
-            </>
-          )}
-        </>
+        sections.map((s) => (
+          <Fragment key={s.id}>
+            {/* With nothing due or for today there is one list, which needs no heading. */}
+            {(s.id !== 'rest' || sections.length > 1) && <h3 className="list-section">{s.title}</h3>}
+            <ul className="rows reorderable" data-drag-active={board.dragging || undefined}
+              aria-label={`${s.label}. Drag to reorder, or Alt+arrow keys. Drag a task onto another to group them in a folder.`}>
+              {/* A new task can't be late, so the Due rows have no lines to add one on (its folders do). */}
+              {s.rows.flatMap((e, i) => [
+                s.id !== 'due' && gap(refOf(e), 'before'),
+                row(e),
+                s.id !== 'due' && i === s.rows.length - 1 && gap(refOf(e), 'after'),
+              ])}
+            </ul>
+          </Fragment>
+        ))
       )}
     </FloatingWindow>
   )

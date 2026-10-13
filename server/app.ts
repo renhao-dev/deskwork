@@ -13,6 +13,8 @@ import {
   verifyPassword, type Env,
 } from './auth.ts'
 import { isNewer, latestRelease, VERSION } from './version.ts'
+import { retireLauncher } from './launcher.ts'
+import { createUpdater } from './updater.ts'
 import * as store from './store.ts'
 import * as notes from './notes.ts'
 import * as spaces from './spaces.ts'
@@ -44,9 +46,16 @@ const typeParam = (v: string | undefined): ItemType =>
   v === 'goals' || v === 'goal' ? 'goal' : v === 'tasks' || v === 'task' ? 'task' : store.fail(404, 'Not found')
 
 api.get('/health', (c) => c.json({ ok: true, build: BUILD, version: VERSION }))
+const updater = createUpdater({
+  brew: process.env.DESKWORK_BREW,
+  installed: process.env.DESKWORK_OPT,
+  current: VERSION,
+  // Leaves a moment for the page to hear that it worked. The service is kept alive, so it comes back.
+  restart: () => setTimeout(() => process.exit(0), 1500),
+})
 api.get('/version', async (c) => {
   const latest = await latestRelease()
-  return c.json({ version: VERSION, latest: latest && isNewer(latest.version, VERSION) ? latest : null })
+  return c.json({ version: VERSION, latest: latest && isNewer(latest.version, VERSION) ? latest : null, canUpdate: updater.available() })
 })
 
 // ---------- auth ----------
@@ -81,6 +90,14 @@ api.use('/*', async (c, next) => {
 })
 
 api.get('/me', (c) => c.json(c.get('user')))
+
+// The page calls this when Chrome has installed Deskwork as an app: the Launchpad launcher is
+// then a second, older icon for the same thing, so it goes.
+api.post('/launcher/retire', (c) => c.json({ removed: retireLauncher() }))
+
+// The Update button: has Homebrew install the new version, then the server restarts as it.
+api.post('/update', (c) => c.json(updater.start()))
+api.get('/update', (c) => c.json(updater.status()))
 
 api.put('/me/settings', async (c) => {
   const u = c.get('user')
@@ -201,12 +218,20 @@ api.put('/goals/:id', async (c) => c.json(store.updateGoal(c.get('user'), idPara
 
 api.get('/tasks', (c) => c.json(store.listTasks(c.get('user'))))
 api.post('/tasks', async (c) => c.json(store.createTask(c.get('user'), await body(c))))
-api.put('/tasks/order', async (c) => {
-  const { ids } = await body<{ ids?: number[] }>(c)
-  store.reorderTasks(c.get('user'), Array.isArray(ids) ? ids : [])
+api.put('/tasks/layout', async (c) => {
+  const { entries } = await body<{ entries?: unknown }>(c)
+  store.arrangeTasks(c.get('user'), entries)
   return c.json({ ok: true })
 })
 api.put('/tasks/:id', async (c) => c.json(store.updateTask(c.get('user'), idParam(c.req.param('id')), await body(c))))
+
+api.post('/task-folders', async (c) => c.json(store.createTaskFolder(c.get('user'), await body(c))))
+api.put('/task-folders/:id', async (c) => c.json(store.updateTaskFolder(c.get('user'), idParam(c.req.param('id')), await body(c))))
+// Deleting a folder ungroups it: the tasks stay.
+api.delete('/task-folders/:id', (c) => {
+  store.ungroupTaskFolder(c.get('user'), idParam(c.req.param('id')))
+  return c.json({ ok: true })
+})
 
 api.get('/:type{goals|tasks}/:id', (c) =>
   c.json(store.itemDetail(c.get('user'), typeParam(c.req.param('type')), idParam(c.req.param('id')))))

@@ -56,7 +56,18 @@ test('a request without a session is refused', async () => {
   const saved = cookie
   cookie = ''
   assert.equal((await call('GET', '/api/spaces')).status, 401)
+  // This one deletes a file on the Mac, so it especially must not answer strangers.
+  assert.equal((await call('POST', '/api/launcher/retire')).status, 401)
+  // And this one runs Homebrew and restarts the server.
+  assert.equal((await call('POST', '/api/update')).status, 401)
+  assert.equal((await call('GET', '/api/update')).status, 401)
   cookie = saved
+})
+
+test('a copy that Homebrew did not install does not offer to update itself', async () => {
+  const status = await ok('POST', '/api/update')
+  assert.equal(status.state, 'failed')
+  assert.match(status.error, /not installed with Homebrew/)
 })
 
 test('a new goal gets a space of its own, and notes land in it', async () => {
@@ -283,9 +294,117 @@ test('a new task goes to the top of the list, even after the list was reordered'
   const a = await ok('POST', '/api/tasks', { title: 'Order A' })
   const b = await ok('POST', '/api/tasks', { title: 'Order B' })
   assert.deepEqual(await titles(), ['Order B', 'Order A'])
-  await ok('PUT', '/api/tasks/order', { ids: [a.id, b.id] })
+  await ok('PUT', '/api/tasks/layout', { entries: [{ task: a.id }, { task: b.id }] })
   await ok('POST', '/api/tasks', { title: 'Order C' })
   assert.deepEqual(await titles(), ['Order C', 'Order A', 'Order B'])
+})
+
+test('tasks can be grouped into a folder, moved in and out of it, and ungrouped', async () => {
+  type T = { id: number; title: string; folderId: number | null }
+  // The list as the Tasks window shows it: "Fold C", or "Errands[Fold B, Fold A]" for a folder.
+  const shape = async () => {
+    const d = await ok('GET', '/api/dashboard')
+    const out: string[] = []
+    let last: number | null = null
+    for (const t of (d.tasks as T[]).filter((t) => t.title.startsWith('Fold '))) {
+      if (t.folderId === null) out.push(t.title)
+      else if (t.folderId === last) out[out.length - 1] = out[out.length - 1].replace(']', `, ${t.title}]`)
+      else out.push(`${d.taskFolders.find((f: { id: number }) => f.id === t.folderId).title}[${t.title}]`)
+      last = t.folderId
+    }
+    return out
+  }
+  const [a, b, c, d] = [
+    await ok('POST', '/api/tasks', { title: 'Fold A' }), await ok('POST', '/api/tasks', { title: 'Fold B' }),
+    await ok('POST', '/api/tasks', { title: 'Fold C' }), await ok('POST', '/api/tasks', { title: 'Fold D' }),
+  ]
+  assert.deepEqual(await shape(), ['Fold D', 'Fold C', 'Fold B', 'Fold A'])
+
+  // Dropping A on B makes a folder where B was. It starts closed, with a name to change.
+  const folder = await ok('POST', '/api/task-folders', { taskIds: [b.id, a.id] })
+  assert.deepEqual({ title: folder.title, collapsed: folder.collapsed }, { title: 'New folder', collapsed: true })
+  assert.deepEqual(await shape(), ['Fold D', 'Fold C', 'New folder[Fold B, Fold A]'])
+  assert.equal((await call('POST', '/api/task-folders', { taskIds: [c.id] })).status, 400)
+
+  const opened = await ok('PUT', `/api/task-folders/${folder.id}`, { title: 'Errands', collapsed: false })
+  assert.deepEqual({ title: opened.title, collapsed: opened.collapsed }, { title: 'Errands', collapsed: false })
+  assert.equal((await call('PUT', `/api/task-folders/${folder.id}`, { title: '  ' })).status, 400)
+
+  // D goes into the folder between B and A, and the folder moves above C.
+  await ok('PUT', '/api/tasks/layout', { entries: [{ folder: folder.id, tasks: [b.id, d.id, a.id] }, { task: c.id }] })
+  assert.deepEqual(await shape(), ['Errands[Fold B, Fold D, Fold A]', 'Fold C'])
+  // The flat list of all tasks still has every one of them, each knowing its folder.
+  const flat = (await ok('GET', '/api/tasks') as T[]).filter((t) => t.title.startsWith('Fold '))
+  assert.deepEqual(flat.map((t) => [t.title, t.folderId === folder.id]),
+    [['Fold B', true], ['Fold D', true], ['Fold A', true], ['Fold C', false]])
+
+  // A new task still lands on top, above the folder.
+  const e = await ok('POST', '/api/tasks', { title: 'Fold E' })
+  assert.deepEqual(await shape(), ['Fold E', 'Errands[Fold B, Fold D, Fold A]', 'Fold C'])
+
+  // A list that names a task twice, or one that doesn't exist, changes nothing.
+  assert.equal((await call('PUT', '/api/tasks/layout', { entries: [{ task: a.id }, { folder: folder.id, tasks: [a.id] }] })).status, 400)
+  assert.equal((await call('PUT', '/api/tasks/layout', { entries: [{ task: 999999 }] })).status, 400)
+  assert.deepEqual(await shape(), ['Fold E', 'Errands[Fold B, Fold D, Fold A]', 'Fold C'])
+
+  // Ungrouping leaves the tasks where the folder was, in the same order.
+  await ok('DELETE', `/api/task-folders/${folder.id}`)
+  assert.deepEqual(await shape(), ['Fold E', 'Fold B', 'Fold D', 'Fold A', 'Fold C'])
+
+  // A folder goes away by itself when its last task is dragged out…
+  const second = await ok('POST', '/api/task-folders', { taskIds: [c.id, e.id], title: 'Second' })
+  assert.deepEqual(await shape(), ['Fold B', 'Fold D', 'Fold A', 'Second[Fold C, Fold E]'])
+  await ok('PUT', '/api/tasks/layout', { entries: [{ task: e.id }, { task: c.id }, { task: b.id }, { task: d.id }, { task: a.id }] })
+  assert.deepEqual(await shape(), ['Fold E', 'Fold C', 'Fold B', 'Fold D', 'Fold A'])
+  assert.equal((await call('PUT', `/api/task-folders/${second.id}`, { collapsed: false })).status, 404)
+
+  // …or deleted.
+  const third = await ok('POST', '/api/task-folders', { taskIds: [a.id, b.id], title: 'Third' })
+  await ok('DELETE', `/api/tasks/${a.id}`)
+  assert.deepEqual(await shape(), ['Fold E', 'Fold C', 'Fold D', 'Third[Fold B]'])
+  await ok('DELETE', `/api/tasks/${b.id}`)
+  assert.equal((await call('PUT', `/api/task-folders/${third.id}`, { collapsed: false })).status, 404)
+})
+
+test('a new task can be made at a spot in the list: between two tasks, or inside a folder', async () => {
+  type T = { id: number; title: string; folderId: number | null }
+  // "Spot A", or "(Spot B, Spot C)" for the tasks of a folder.
+  const shape = async () => {
+    const mine = ((await ok('GET', '/api/dashboard')).tasks as T[]).filter((t) => t.title.startsWith('Spot '))
+    return mine.map((t, i) => {
+      const opens = t.folderId !== null && mine[i - 1]?.folderId !== t.folderId
+      const closes = t.folderId !== null && mine[i + 1]?.folderId !== t.folderId
+      return `${opens ? '(' : ''}${t.title}${closes ? ')' : ''}`
+    }).join(', ')
+  }
+  const a = await ok('POST', '/api/tasks', { title: 'Spot A' })
+  const b = await ok('POST', '/api/tasks', { title: 'Spot B' })
+  const c = await ok('POST', '/api/tasks', { title: 'Spot C' })
+  const folder = await ok('POST', '/api/task-folders', { taskIds: [b.id, a.id] })
+  assert.equal(await shape(), 'Spot C, (Spot B, Spot A)')
+
+  // 0 stands for the task being made. Between C and the folder: a task of its own.
+  const d = await ok('POST', '/api/tasks', { title: 'Spot D', layout: [{ task: c.id }, { task: 0 }, { folder: folder.id, tasks: [b.id, a.id] }] })
+  assert.equal(d.folderId, null)
+  assert.equal(await shape(), 'Spot C, Spot D, (Spot B, Spot A)')
+
+  // Between the two tasks of the folder: it belongs to the folder.
+  const e = await ok('POST', '/api/tasks', {
+    title: 'Spot E', layout: [{ task: c.id }, { task: d.id }, { folder: folder.id, tasks: [b.id, 0, a.id] }],
+  })
+  assert.equal(e.folderId, folder.id)
+  assert.equal(await shape(), 'Spot C, Spot D, (Spot B, Spot E, Spot A)')
+
+  // At the very end.
+  await ok('POST', '/api/tasks', {
+    title: 'Spot F', layout: [{ task: c.id }, { task: d.id }, { folder: folder.id, tasks: [b.id, e.id, a.id] }, { task: 0 }],
+  })
+  assert.equal(await shape(), 'Spot C, Spot D, (Spot B, Spot E, Spot A), Spot F')
+
+  // A list that is out of date makes no task at all.
+  const stale = await call('POST', '/api/tasks', { title: 'Spot G', layout: [{ task: 0 }, { task: 999999 }] })
+  assert.equal(stale.status, 400)
+  assert.equal(await shape(), 'Spot C, Spot D, (Spot B, Spot E, Spot A), Spot F')
 })
 
 test('a failure inside a nested transaction rolls the whole thing back', async () => {

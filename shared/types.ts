@@ -72,7 +72,20 @@ export interface Task {
   createdAt: number
   updatedAt: number
   totalSeconds: number
+  /** The folder this task is grouped into, if any. */
+  folderId: number | null
 }
+
+/** A group of tasks shown as one row in the list. Its tasks point at it with folderId. */
+export interface TaskFolder {
+  id: number
+  title: string
+  /** Closed folders show as one row; open ones list their tasks underneath. */
+  collapsed: boolean
+}
+
+/** One row of the task list as it should be saved: a task on its own, or a folder with its tasks. */
+export type TaskLayoutEntry = { task: number } | { folder: number; tasks: number[] }
 
 export interface Comment {
   id: number
@@ -167,10 +180,20 @@ export interface Completion {
 export interface Dashboard {
   today: string
   goals: Goal[]
+  /** In list order; the tasks of one folder come together, where the folder sits. */
   tasks: Task[]
+  taskFolders: TaskFolder[]
   completions: Completion[]
   todaySeconds: number // logged work today, excluding the live timer
   timer: import('./timer.ts').TimerState | null
+}
+
+/** How the Update button's work is going. */
+export interface UpdateStatus {
+  /** idle: nothing asked. running: Homebrew is at work. restarting: done, the server is about to quit. */
+  state: 'idle' | 'running' | 'restarting' | 'failed'
+  /** Why it failed, in Homebrew's own words where it gave any. */
+  error?: string
 }
 
 export interface BookmarkInput {

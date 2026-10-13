@@ -1,5 +1,6 @@
 // Installing Deskwork as a Chrome app gives it its own window, Dock icon and Cmd+Tab entry.
 import { useSyncExternalStore } from 'react'
+import { api } from './api.ts'
 
 interface InstallPromptEvent extends Event {
   prompt(): Promise<void>
@@ -23,6 +24,8 @@ export function setupPwa() {
   window.addEventListener('appinstalled', () => {
     deferred = null
     notify()
+    // Chrome's Deskwork app is now in Launchpad; the Homebrew launcher next to it is no longer needed.
+    api.retireLauncher().catch(() => {})
   })
 }
 

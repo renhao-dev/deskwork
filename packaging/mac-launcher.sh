@@ -1,5 +1,5 @@
 #!/bin/bash
-# Puts Deskwork in Launchpad for a Homebrew install: makes ~/Applications/Deskwork.app, a small app
+# Puts Deskwork in Launchpad for a Homebrew install: makes "Deskwork(chrome tab).app" in ~/Applications, a small app
 # that starts the server if it isn't running and opens Deskwork in Chrome. The server runs this each
 # time it starts, so the icon appears on its own and comes back if it is deleted.
 #
@@ -13,8 +13,17 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-5174}"
 BREW="${DESKWORK_BREW:-brew}"
-APP="$HOME/Applications/Deskwork.app"
+# Named apart from Chrome's own "Deskwork" app, so Launchpad never shows two icons that look the same.
+NAME="Deskwork(chrome tab)"
+APP="$HOME/Applications/$NAME.app"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+# Version 0.1.1 called the launcher plain "Deskwork". Remove that one, but only if it really is ours.
+OLD="$HOME/Applications/Deskwork.app"
+if [ "$(defaults read "$OLD/Contents/Info" CFBundleIdentifier 2>/dev/null || true)" = local.deskwork.launcher ]; then
+  "$LSREGISTER" -u "$OLD" 2>/dev/null || true
+  rm -rf "$OLD"
+fi
 VERSION="$(sed -nE 's/^ *"version": *"([^"]+)".*/\1/p' "$HERE/package.json" | head -1)"
 
 chrome_app() { ls -d "$HOME/Applications/Chrome Apps.localized/Deskwork.app" "$HOME/Applications/Chrome Apps/Deskwork.app" 2>/dev/null | head -1 || true; }
@@ -33,8 +42,8 @@ cat >"$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Deskwork</string>
-  <key>CFBundleDisplayName</key><string>Deskwork</string>
+  <key>CFBundleName</key><string>$NAME</string>
+  <key>CFBundleDisplayName</key><string>$NAME</string>
   <key>CFBundleIdentifier</key><string>local.deskwork.launcher</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>

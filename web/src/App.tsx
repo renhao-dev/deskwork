@@ -20,7 +20,6 @@ import { ResourceDialog } from './resources/ResourceDialog.tsx'
 import { WikiWindow } from './wiki/WikiWindow.tsx'
 import { isWikiPath } from './wiki/route.ts'
 import { listenForChanges } from './wiki/sync.ts'
-import { announceNewRelease } from './updates.ts'
 
 // /wiki is the wiki on its own, full screen, in its own window.
 const WikiApp = lazy(() => import('./wiki/WikiApp.tsx').then((m) => ({ default: m.WikiApp })))
@@ -60,12 +59,6 @@ export function App() {
       }, () => {})
     }
   }, [me.data, qc])
-
-  // Once signed in, mention a newer release if there is one.
-  const signedIn = !!me.data
-  useEffect(() => {
-    if (signedIn) announceNewRelease()
-  }, [signedIn])
 
   const theme = me.data?.settings.theme
   useEffect(() => {
